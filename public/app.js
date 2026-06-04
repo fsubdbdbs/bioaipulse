@@ -391,7 +391,8 @@ function loadLeaflet() {
 /* COACH */
 function renderCoach() {
   const d=State.data, wrap=el(`<div></div>`);
-  wrap.appendChild(el(`<div class="head"><div><h2>Coach AI</h2><div class="date">Twój cel: ${d.goals_catalog[State.goal].label}</div></div></div>`));
+  const activeGoalData = d.goals_catalog[State.goal] || d.custom_goal || {label: State.goal, emoji:"🎯"};
+  wrap.appendChild(el(`<div class="head"><div><h2>Coach AI</h2><div class="date">Cel: ${activeGoalData.emoji} ${activeGoalData.label}</div></div></div>`));
 
   // Goal grid — predefiniowane + max 1 custom slot
   const gg=el(`<div class="card"><h3>Mój cel</h3><div class="goalgrid"></div><div class="sub" style="margin-top:10px">Wybierz cel albo napisz coachowi niżej — dostosuje całą apkę.</div></div>`);
@@ -462,11 +463,11 @@ async function sendChat() {
   } catch { typing.remove(); State.chat.push({role:"assistant",content:"Coś poszło nie tak. Spróbuj ponownie."}); paintChat(); }
 }
 async function setGoal(id, fromChat=false) {
-  if (!State.data.goals_catalog[id]) return;
   State.goal=id; localStorage.setItem("pulse_goal",id);
   await loadData();
-  toast(`Cel ustawiony: ${State.data.goals_catalog[id].emoji} ${State.data.goals_catalog[id].label}`);
-  if (!fromChat) render(); else { render(); }
+  const g = State.data.goals_catalog[id] || State.data.custom_goal || {emoji:"🎯", label:id};
+  toast(`Cel: ${g.emoji} ${g.label}`);
+  render();
 }
 
 /* PROFILE */
