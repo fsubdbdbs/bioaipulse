@@ -207,10 +207,14 @@ def api_data():
     if not history:
         return jsonify({"empty": True, "is_demo": is_demo})
 
-    # Pobierz zapisane dynamiczne cele i wstrzyknij do analytics
-    custom_goals = store_get("custom_goals", {})
+    # Jeden slot na cel użytkownika (nie lista)
+    custom_goal = store_get("custom_goal", None)
+    custom_goals = {custom_goal["goal"]: custom_goal} if custom_goal else {}
     bundle = analytics.analyze(history, goal=goal, custom_goals=custom_goals)
     bundle["is_demo"] = is_demo
+    # Dodaj custom_goal do odpowiedzi żeby frontend mógł pokazać kafelek
+    if custom_goal:
+        bundle["custom_goal"] = custom_goal
     return jsonify(bundle)
 
 
@@ -239,66 +243,21 @@ def api_export():
 # Czat z AI-coachem (Groq) — potrafi ustawić cel aplikacji
 # ---------------------------------------------------------------------------
 
-CHAT_SYSTEM = """Jesteś Pulse — osobisty coach zdrowia Franka. Mówisz po polsku. Jesteś zwięzły: max 3-4 zdania na odpowiedź. Bez wstępów, bez powtarzania pytania użytkownika, bez motywacyjnego lania wody. Konkrety.
+CHAT_SYSTEM = """Jesteś Pulse — osobisty AI coach zdrowia Franka. Polski, krótko, konkretnie. Max 3 zdania. Zero wstępów, zero powtarzania pytania, zero motywacyjnego lania wody.
 
-Odpowiadasz na KAŻDE pytanie: trening, sen, dane z opaski, odżywianie, motywacja. Zawsze używaj konkretnych liczb z danych użytkownika.
+Reagujesz na dane z opaski — zawsze cytuj liczby. Odpowiadasz na każde pytanie: trening, sen, HRV, odżywianie, cokolwiek.
 
-TWOJA NAJWAŻNIEJSZA UMIEJĘTNOŚĆ — TWORZENIE DOWOLNEGO CELU:
-Użytkownik może powiedzieć COKOLWIEK: bieganie, pływanie, skakanka, karate, wspinaczka, taniec, joga, spacery z psem — dosłownie cokolwiek. Twoim zadaniem jest stworzyć dla tej aktywności spersonalizowany cel.
+ZMIANA CELU — działasz jak inteligentny system, nie Siri:
+- Użytkownik może powiedzieć DOSŁOWNIE COKOLWIEK: brzuszki, skakanka, karate, taniec, spacery, golf, cokolwiek.
+- Jest tylko JEDEN slot na cel użytkownika — ZAWSZE nadpisuje poprzedni. Nie tworzysz listy.
+- Dopytaj max o 1 szczegół (jak często / jak długo). Potem USTAW cel.
+- Przy potwierdzeniu dołącz na końcu (niewidoczny dla użytkownika):
 
-ZASADA (3 kroki):
-1. Dopytaj o 1-2 szczegóły (jak często? jak długo? jaki poziom?).
-2. Gdy masz dość info — potwierdź naturalnie i dołącz na SAMYM KOŃCU blok (użytkownik go nie widzi):
+<<SET_GOAL:{"goal":"ID","label":"Nazwa PL","emoji":"🎯","plan_hard":["zadanie","zadanie","zadanie"],"plan_mid":["zadanie","zadanie"],"plan_easy":["zadanie lekkie","zadanie"],"plan_headline_hard":"Nagłówek mocny","plan_headline_mid":"Nagłówek średni","plan_headline_easy":"Regeneracja","daily_task":"Jedno zadanie dnia","note":"szczegóły"}>>
 
-<<SET_GOAL:JSON>>
-
-gdzie JSON to obiekt (bez spacji po <<SET_GOAL:):
-{
-  "goal": "unikalny_id_bez_spacji",
-  "label": "Ładna nazwa po polsku",
-  "emoji": "🎯",
-  "plan_hard": ["zadanie gdy gotowość wysoka","drugie","trzecie"],
-  "plan_mid": ["zadanie gdy gotowość średnia","drugie"],
-  "plan_easy": ["zadanie gdy gotowość niska / regeneracja","drugie"],
-  "plan_headline_hard": "Krótki nagłówek planu",
-  "plan_headline_mid": "Krótki nagłówek",
-  "plan_headline_easy": "Odpoczynek / regeneracja",
-  "daily_task": "Główne zadanie dnia (jedno zdanie)",
-  "note": "szczegóły które podał użytkownik"
-}
-
-PRZYKŁADY poprawnych bloków:
-<<SET_GOAL:{"goal":"rope_jumping","label":"Skakanka","emoji":"🪢","plan_hard":["5 serii 2 min skakania / 1 min przerwy","Ćwicz podwójne obroty","Rozciągnij łydki po"],"plan_mid":["3×1 min skakania / 1 min przerwy","Skup się na technice","Lekkie rozgrzanie przed"],"plan_easy":["10 min lekkiego skakania","Praca nad rytmem","Odpuść intensywność"],"plan_headline_hard":"Skakanka — interwały","plan_headline_mid":"Skakanka — umiarkowanie","plan_headline_easy":"Lekko i technicznie","daily_task":"Skakanka: 5×2 min interwałów (codziennie 20 min)","note":"codziennie 20 minut"}>>
-
-<<SET_GOAL:{"goal":"karate","label":"Karate","emoji":"🥋","plan_hard":["45 min trening kumite","Kata 3 razy z pełną intensywnością","Ćwiczenia siłowe kończyn"],"plan_mid":["30 min kata i techniki","Spokojne kumite z partnerem","Stretching po"],"plan_easy":["Kata 1 raz powoli","Stretching 15 min","Ćwiczenia oddechu"],"plan_headline_hard":"Karate — pełny trening","plan_headline_mid":"Karate — techniki","plan_headline_easy":"Regeneracja i kata","daily_task":"Karate: kata + 20 min kumite","note":"3x w tygodniu"}>>
-
-ZASADY:
-- id: małe litery, podkreślniki (rope_jumping, karate, joga_poranna, taniec_latino)
-- emoji: ZAWSZE dobierz odpowiednie (🪢🥋🧗🕺🧘🤸🏇⛷️🎾🏌️🎯 itd.)
-- plan_hard/mid/easy: minimum 2-3 konkretne zadania, dostosowane do tej aktywności
-- daily_task: jedno zdanie, konkretne (to pojawi się w checkliście na głównym ekranie)
-- KRYTYCZNE: Gdy potwierdzasz zmianę — blok <<SET_GOAL:...>> jest OBOWIĄZKOWY. Bez niego aplikacja nie zmieni celu i ekran główny nie zostanie zaktualizowany. Użytkownik będzie sfrustrowany.
-- Nie wstawiaj bloku przy zwykłej rozmowie — tylko przy finalnym potwierdzeniu.
-
-Nie diagnozujesz chorób."""
-
-GOAL_KEYWORDS = {
-    "swimming":   ["pływa", "pływanie", "basen", "kraul", "swim"],
-    "running":    ["biega", "bieg", "bieganie"],
-    "cycling":    ["rower", "kolarz", "jazda"],
-    "strength":   ["siłow", "siła", "mięśni", "masę", "kulturyst"],
-    "weight_loss":["schud", "wagi", "tłuszcz", "redukc", "odchud"],
-    "sleep":      ["sen ", "spać", "wysyp", "zasypia"],
-    "maintain":   ["utrzyma", "formę"],
-}
-
-
-def _detect_goal(text):
-    low = text.lower()
-    for gid, kws in GOAL_KEYWORDS.items():
-        if any(k in low for k in kws):
-            return gid
-    return None
+Zasady ID: małe litery bez spacji (brzuszki, skakanka, karate, taniec_latino).
+Emoji: zawsze trafne (🏋️🪢🥋🧗🕺🧘🤸🏇⛷️🎾🚵🤼🥊🎯).
+KRYTYCZNE: bez bloku aplikacja NIE zmienia celu. Zawsze go dodaj przy potwierdzeniu."""
 
 
 @app.post("/api/chat")
@@ -309,7 +268,9 @@ def api_chat():
     messages = body.get("messages", [])
     goal = body.get("goal", "maintain")
     history, _ = load_history()
-    bundle = analytics.analyze(history, goal=goal) if history else {}
+    custom_goal = store_get("custom_goal", None)
+    custom_goals = {custom_goal["goal"]: custom_goal} if custom_goal else {}
+    bundle = analytics.analyze(history, goal=goal, custom_goals=custom_goals) if history else {}
     today = bundle.get("today", {})
     ready = bundle.get("readiness", {})
     sleep = today.get("sleep") or {}
@@ -319,20 +280,19 @@ def api_chat():
         vals = [getter(e) for e in history[-n:] if getter(e) is not None]
         return round(sum(vals)/len(vals), 1) if vals else None
 
-    goal_label = analytics.GOALS.get(goal, {}).get("label", goal)
+    goal_data = bundle.get("goals_catalog", {}).get(goal, {})
+    goal_label = goal_data.get("label", goal)
     ins = "; ".join(i["title"] for i in bundle.get("insights", [])) or "brak"
     ctx = (
-        "[Aktualne dane Franka z opaski]\n"
-        f"Aktywny cel aplikacji: {goal_label}\n"
-        f"Daily Readiness: {ready.get('score')}/100 ({ready.get('label')})\n"
-        f"Sleep Score: {sleep.get('sleep_score')}/100, sen {round((sleep.get('total_minutes') or 0)/60,1)}h\n"
-        f"Tętno spocz.: {today.get('resting_hr_bpm')} bpm (norma {base.get('rhr')}), "
+        f"[DANE BIOMETRYCZNE — {datetime.now(TZ).strftime('%d.%m.%Y %H:%M')}]\n"
+        f"Cel: {goal_label} | Readiness: {ready.get('score')}/100 ({ready.get('label')})\n"
+        f"Sleep Score: {sleep.get('sleep_score')}/100, sen: {round((sleep.get('total_minutes') or 0)/60,1)}h\n"
+        f"RHR: {today.get('resting_hr_bpm')} bpm (norma {base.get('rhr')}), "
         f"HRV: {today.get('hrv_rmssd')} ms (norma {base.get('hrv')})\n"
         f"SpO2: {today.get('spo2_pct')}%, oddech: {today.get('respiration_rate')}/min, "
-        f"temp. skóry: {today.get('skin_temp_variation_c')}°C, obciążenie kardio: {today.get('cardio_load')}\n"
-        f"Kroki: {today.get('steps')}, dystans: {today.get('distance_km')} km, "
-        f"minuty strefy: {today.get('active_zone_minutes')}, kalorie: {today.get('calories_kcal')}\n"
-        f"Średnie 7 dni: sen {_avg(lambda e:(e.get('sleep') or {}).get('total_minutes'))} min, "
+        f"temp.skóry: {today.get('skin_temp_variation_c')}°C, cardio load: {today.get('cardio_load')}\n"
+        f"Kroki: {today.get('steps')}, AZM: {today.get('active_zone_minutes')} min, kcal: {today.get('calories_kcal')}\n"
+        f"Śr. 7 dni: sen {_avg(lambda e:(e.get('sleep') or {}).get('total_minutes'))} min, "
         f"kroki {_avg(lambda e:e.get('steps'))}, HRV {_avg(lambda e:e.get('hrv_rmssd'))}\n"
         f"Sygnały: {ins}"
     )
@@ -348,58 +308,42 @@ def api_chat():
                 if m["role"] == "user" and i == len(messages) - 1:
                     content = f"{content}\n\n{ctx}"
                 msgs.append({"role": m["role"], "content": content})
-            resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=600)
+            resp = client.chat.completions.create(
+                model="llama-3.3-70b-versatile", messages=msgs,
+                max_tokens=400,   # krótsze odpowiedzi
+                temperature=0.6,
+            )
             reply = resp.choices[0].message.content
         except Exception as e:  # noqa: BLE001
-            return jsonify({"reply": f"(Błąd AI: {e}) Możesz ustawić cel ręcznie w Profilu.", "set_goal": None})
+            return jsonify({"reply": f"Błąd AI: {e}", "set_goal": None})
     else:
-        # Fallback bez klucza Groq — prosta heurystyka (na produkcji ustaw GROQ_API_KEY)
-        last = (messages[-1]["content"] if messages else "").lower()
-        intent = any(w in last for w in ["chcę", "chce", "zacz", "skup", "cel", "przejść", "przejdz", "zmień", "zmien", "ustaw"])
-        g = _detect_goal(last)
-        if g and intent:
-            reply = (f"Jasne — ustawiam cel: {analytics.GOALS[g]['label']}. Dopasuję plany i statystyki pod to. "
-                     f"(Pełna rozmowa AI ruszy po dodaniu klucza Groq.) <<SET_GOAL:{{\"goal\":\"{g}\"}}>>")
-        else:
-            reply = ("Działam teraz w trybie uproszczonym (bez klucza AI). Mogę ustawić cel — napisz np. "
-                     "'chcę zacząć biegać'. Po podłączeniu klucza Groq odpowiem swobodnie na każde pytanie o Twoje dane.")
+        reply = "Brak klucza GROQ_API_KEY — dodaj go do .env."
 
-    # Wyciągnij dyrektywę SET_GOAL
+    # Wyciągnij SET_GOAL — JEDEN SLOT, zawsze nadpisuje
     set_goal = None
     m = re.search(r"<<SET_GOAL:(\{.*?\})>>", reply, re.S)
     if m:
         try:
             payload = json.loads(m.group(1))
-            # Normalizuj id — usuń polskie znaki i skróć do pierwszego słowa rdzenia
-            raw_id = payload.get("goal", "").strip().lower()
-            raw_id = raw_id.replace(" ", "_").replace("-", "_")
-            # Usuwanie duplikatów: jeśli istnieje cel o id będącym prefiksem lub zawierającym ten rdzeń
-            custom_goals = store_get("custom_goals", {})
-            g = raw_id
-            # Sprawdź czy nie ma już podobnego celu (np. "skakanka" gdy nowe id to "skakanka_codziennie")
-            for existing_id in list(custom_goals.keys()):
-                base = existing_id.split("_")[0]
-                if raw_id.startswith(base) or base == raw_id.split("_")[0]:
-                    g = existing_id  # aktualizuj istniejący zamiast tworzyć nowy
-                    break
-            if g:
-                custom_goals[g] = {
-                    "goal": g,
-                    "label": payload.get("label", g),
-                    "emoji": payload.get("emoji", "🎯"),
-                    "plan_hard": payload.get("plan_hard", []),
-                    "plan_mid": payload.get("plan_mid", []),
-                    "plan_easy": payload.get("plan_easy", []),
+            gid = payload.get("goal", "").strip().lower().replace(" ", "_").replace("-", "_")
+            if gid:
+                data = {
+                    "goal":               gid,
+                    "label":              payload.get("label", gid),
+                    "emoji":              payload.get("emoji", "🎯"),
+                    "custom":             True,
+                    "plan_hard":          payload.get("plan_hard", []),
+                    "plan_mid":           payload.get("plan_mid", []),
+                    "plan_easy":          payload.get("plan_easy", []),
                     "plan_headline_hard": payload.get("plan_headline_hard", "Wysoka gotowość"),
-                    "plan_headline_mid": payload.get("plan_headline_mid", "Umiarkowanie"),
+                    "plan_headline_mid":  payload.get("plan_headline_mid", "Umiarkowanie"),
                     "plan_headline_easy": payload.get("plan_headline_easy", "Regeneracja"),
-                    "daily_task": payload.get("daily_task", ""),
-                    "note": payload.get("note", ""),
+                    "daily_task":         payload.get("daily_task", ""),
+                    "note":               payload.get("note", ""),
                 }
-                store_set("custom_goals", custom_goals)
-                set_goal = {"goal": g, "label": custom_goals[g]["label"],
-                            "emoji": custom_goals[g]["emoji"], "note": payload.get("note", "")}
-        except json.JSONDecodeError:
+                store_set("custom_goal", data)   # JEDEN SLOT — nadpisuje
+                set_goal = {"goal": gid, "label": data["label"], "emoji": data["emoji"]}
+        except (json.JSONDecodeError, KeyError):
             pass
         reply = reply[:m.start()].strip()
 

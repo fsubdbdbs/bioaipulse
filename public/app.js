@@ -393,14 +393,22 @@ function renderCoach() {
   const d=State.data, wrap=el(`<div></div>`);
   wrap.appendChild(el(`<div class="head"><div><h2>Coach AI</h2><div class="date">Twój cel: ${d.goals_catalog[State.goal].label}</div></div></div>`));
 
-  // Goal grid
-  const gg=el(`<div class="card"><h3>Mój cel</h3><div class="goalgrid"></div><div class="sub" style="margin-top:10px">Wybierz cel albo napisz coachowi niżej — dopasuje plany i statystyki.</div></div>`);
+  // Goal grid — predefiniowane + max 1 custom slot
+  const gg=el(`<div class="card"><h3>Mój cel</h3><div class="goalgrid"></div><div class="sub" style="margin-top:10px">Wybierz cel albo napisz coachowi niżej — dostosuje całą apkę.</div></div>`);
   const grid=gg.querySelector(".goalgrid");
-  Object.entries(d.goals_catalog).forEach(([id,g])=>{
+  // Predefiniowane (stałe)
+  const BUILTIN = ["maintain","running","cycling","swimming","strength","weight_loss","sleep"];
+  BUILTIN.forEach(id=>{
+    const g=d.goals_catalog[id]; if(!g) return;
     const btn=el(`<div class="goalbtn ${id===State.goal?"active":""}"><div class="ge">${g.emoji}</div><div class="gl">${g.label}</div></div>`);
-    btn.addEventListener("click",()=>setGoal(id));
-    grid.appendChild(btn);
+    btn.addEventListener("click",()=>setGoal(id)); grid.appendChild(btn);
   });
+  // Custom — jeden slot (jeśli jest i to nie predefiniowany)
+  const custom = d.custom_goal || (d.goals_catalog[State.goal]?.custom ? d.goals_catalog[State.goal] : null);
+  if(custom && !BUILTIN.includes(custom.goal)){
+    const btn=el(`<div class="goalbtn ${custom.goal===State.goal?"active":""}" style="position:relative"><div class="ge">${custom.emoji}</div><div class="gl">${custom.label}</div></div>`);
+    btn.addEventListener("click",()=>setGoal(custom.goal)); grid.appendChild(btn);
+  }
   wrap.appendChild(gg);
 
   // Chat
