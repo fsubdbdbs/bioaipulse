@@ -239,9 +239,9 @@ def api_export():
 # Czat z AI-coachem (Groq) — potrafi ustawić cel aplikacji
 # ---------------------------------------------------------------------------
 
-CHAT_SYSTEM = """Jesteś Pulse — osobisty coach zdrowia i rozmówca Franka. Mówisz po polsku, naturalnie, konkretnie, bez lania wody.
+CHAT_SYSTEM = """Jesteś Pulse — osobisty coach zdrowia Franka. Mówisz po polsku. Jesteś zwięzły: max 3-4 zdania na odpowiedź. Bez wstępów, bez powtarzania pytania użytkownika, bez motywacyjnego lania wody. Konkrety.
 
-Jesteś PRAWDZIWYM asystentem AI. Rozmawiaj swobodnie o wszystkim: trening, sen, regeneracja, odżywianie, interpretacja danych ("co znaczy HRV X?", "czy mogę dziś biegać?"), motywacja, styl życia. Zawsze opieraj się na liczbach z danych (podane w każdej wiadomości).
+Odpowiadasz na KAŻDE pytanie: trening, sen, dane z opaski, odżywianie, motywacja. Zawsze używaj konkretnych liczb z danych użytkownika.
 
 TWOJA NAJWAŻNIEJSZA UMIEJĘTNOŚĆ — TWORZENIE DOWOLNEGO CELU:
 Użytkownik może powiedzieć COKOLWIEK: bieganie, pływanie, skakanka, karate, wspinaczka, taniec, joga, spacery z psem — dosłownie cokolwiek. Twoim zadaniem jest stworzyć dla tej aktywności spersonalizowany cel.
@@ -370,10 +370,19 @@ def api_chat():
     if m:
         try:
             payload = json.loads(m.group(1))
-            g = payload.get("goal", "").strip().replace(" ", "_")
+            # Normalizuj id — usuń polskie znaki i skróć do pierwszego słowa rdzenia
+            raw_id = payload.get("goal", "").strip().lower()
+            raw_id = raw_id.replace(" ", "_").replace("-", "_")
+            # Usuwanie duplikatów: jeśli istnieje cel o id będącym prefiksem lub zawierającym ten rdzeń
+            custom_goals = store_get("custom_goals", {})
+            g = raw_id
+            # Sprawdź czy nie ma już podobnego celu (np. "skakanka" gdy nowe id to "skakanka_codziennie")
+            for existing_id in list(custom_goals.keys()):
+                base = existing_id.split("_")[0]
+                if raw_id.startswith(base) or base == raw_id.split("_")[0]:
+                    g = existing_id  # aktualizuj istniejący zamiast tworzyć nowy
+                    break
             if g:
-                # Zapisz pełny obiekt celu (dynamiczny lub predefiniowany)
-                custom_goals = store_get("custom_goals", {})
                 custom_goals[g] = {
                     "goal": g,
                     "label": payload.get("label", g),
