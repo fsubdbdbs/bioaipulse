@@ -147,7 +147,7 @@ h2, h3 { margin: 0; }
 .plan li::before { content: "→"; color: var(--accent2); font-weight: 800; }
 
 /* GOAL GRID */
-.goalgrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.goalgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .goalbtn { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 8px; text-align: center; cursor: pointer; transition: .12s; }
 .goalbtn:active { transform: scale(.96); }
 .goalbtn.active { border-color: var(--accent); background: linear-gradient(165deg, rgba(109,124,255,.2), var(--card)); }
@@ -231,6 +231,22 @@ h2, h3 { margin: 0; }
 .hero-metric-pick button { white-space: nowrap; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .hero-metric-pick button.active { background: linear-gradient(135deg,var(--accent),var(--accent2)); color: #fff; border-color: transparent; }
 .coach-tip { background: linear-gradient(160deg, rgba(109,124,255,.14), var(--card)); }
+
+/* Cele na dziś */
+.goals-today { display: flex; flex-direction: column; gap: 8px; }
+.gtask { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--card2); cursor: pointer; transition: background .15s ease, transform .12s var(--ease-out); user-select: none; }
+.gtask:active { transform: scale(.98); }
+.gtask.done { background: rgba(45,212,167,.08); border-color: rgba(45,212,167,.3); }
+.gtask.done .gt-text { color: var(--muted); text-decoration: line-through; }
+.gtask .gt-ic { font-size: 20px; width: 28px; text-align: center; flex: none; }
+.gtask .gt-text { flex: 1; font-size: 14px; line-height: 1.35; }
+.gtask .gt-cat { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.gtask .gt-check { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 12px; flex: none; transition: all .15s var(--ease-out); }
+.gtask.done .gt-check { background: var(--good); border-color: var(--good); color: #fff; }
+.goals-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.goals-progress .gp-bar { flex: 1; height: 6px; background: var(--ringbg); border-radius: 6px; overflow: hidden; }
+.goals-progress .gp-bar > i { display: block; height: 100%; background: linear-gradient(90deg,var(--accent),var(--accent2)); border-radius: 6px; transition: width .4s var(--ease-out); }
+.goals-progress .gp-lbl { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .coach-tip .ct-row { display: flex; gap: 11px; align-items: flex-start; padding: 8px 0; }
 .coach-tip .ct-ic { font-size: 18px; }
 .coach-tip .ask { margin-top: 6px; }

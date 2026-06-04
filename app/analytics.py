@@ -196,6 +196,7 @@ GOALS = {
     "maintain":   {"label": "Utrzymanie formy", "emoji": "⚖️"},
     "running":    {"label": "Bieganie", "emoji": "🏃"},
     "cycling":    {"label": "Rower", "emoji": "🚴"},
+    "swimming":   {"label": "Pływanie", "emoji": "🏊"},
     "strength":   {"label": "Siła", "emoji": "🏋️"},
     "weight_loss":{"label": "Redukcja wagi", "emoji": "🔥"},
     "sleep":      {"label": "Lepszy sen", "emoji": "😴"},
@@ -242,6 +243,12 @@ def action_plans(entry, ready, base, goal="maintain"):
 def _sport_plan(goal, score):
     hard = score >= 75
     mid = 50 <= score < 75
+    if goal == "swimming":
+        if hard:
+            return ("Basen — interwały", ["Rozgrzewka 200m spokojnie, potem 6×50m mocno / 30s przerwy.", "Schłodzenie 100m na wznak.", "Nawodnienie — w wodzie nie czujesz potu, ale się pocisz."])
+        if mid:
+            return ("Basen — spokojny dystans", ["30–45 min w spokojnym, stałym tempie.", "Skup się na technice — długi wyciąg, głowa w dół.", "Naprzemiennie krol i grzbiet."])
+        return ("Basen — regeneracja", ["15–20 min spokojnego pływania, mocno odpuść.", "Ruch w wodzie pomaga regeneracji — delikatne tempo.", "Unikaj mocnych sprintów dziś."])
     if goal == "running":
         if hard:
             return ("Bieg — dzień jakościowy", ["Rozbieganie 10 min + 6×400 m szybko / 200 m trucht.", "Rozciąganie łydek i bioder po.", "Nawodnienie i białko w 30 min po."])
@@ -280,6 +287,63 @@ def _sport_plan(goal, score):
 # Główna funkcja
 # ---------------------------------------------------------------------------
 
+def daily_goals(entry, base, goal="maintain") -> list[dict]:
+    """Konkretne zadania na dziś — generowane z danych, dopasowane do celu."""
+    tasks = []
+    score = (entry.get("daily_readiness") or {}).get("score") or 50
+    sleep_min = _sleep(entry).get("total_minutes") or 0
+    steps = entry.get("steps") or 0
+    hrv = entry.get("hrv_rmssd")
+    rhr = entry.get("resting_hr_bpm")
+    base_rhr = base.get("rhr")
+
+    # Cel treningowy — dobrany do sportu + gotowości
+    if goal == "swimming":
+        if score >= 75:
+            tasks.append({"id":"swim","text":"Basen: 6×50m interwałów + rozgrzewka 200m","cat":"trening","icon":"🏊"})
+        else:
+            tasks.append({"id":"swim","text":"Basen: 30 min spokojny dystans, fokus na technice","cat":"trening","icon":"🏊"})
+    elif goal == "running":
+        tasks.append({"id":"run","text":"Bieg "+("30–40 min tempo" if score>=75 else "20–30 min strefa 2"),"cat":"trening","icon":"🏃"})
+    elif goal == "cycling":
+        tasks.append({"id":"bike","text":"Rower "+("interwały 5×3 min" if score>=75 else "45 min strefa 2"),"cat":"trening","icon":"🚴"})
+    elif goal == "strength":
+        tasks.append({"id":"gym","text":"Siłownia: "+("ciężki dzień główne ćwiczenia" if score>=75 else "średnia intensywność, technika"),"cat":"trening","icon":"🏋️"})
+    elif goal == "weight_loss":
+        tasks.append({"id":"cardio","text":"Cardio 40–50 min + cel 12 000 kroków","cat":"trening","icon":"🔥"})
+    elif goal == "sleep":
+        tasks.append({"id":"bedtime","text":"Połóż się spać przed 23:00 (stała pora)","cat":"sen","icon":"🌙"})
+    else:
+        if score >= 75:
+            tasks.append({"id":"train","text":"Dowolny trening 30–45 min","cat":"trening","icon":"💪"})
+        else:
+            tasks.append({"id":"walk","text":"Spacer 30 min — regeneracja","cat":"ruch","icon":"🚶"})
+
+    # Kroki
+    steps_goal = 12000 if goal == "weight_loss" else 8000
+    if steps < steps_goal:
+        tasks.append({"id":"steps","text":f"Dojdź do {steps_goal:,} kroków (masz {steps:,})".replace(",","."),"cat":"ruch","icon":"👟"})
+
+    # Woda — zawsze
+    tasks.append({"id":"water","text":"Wypij min. 2 litry wody","cat":"zdrowie","icon":"💧"})
+
+    # Sen jeśli niedobór
+    if sleep_min < 390:
+        tasks.append({"id":"sleep","text":"Dziś połóż się wcześniej — dobierz sen","cat":"sen","icon":"😴"})
+
+    # HRV/RHR — regeneracja
+    if hrv and base.get("hrv") and hrv < base["hrv"] - 8:
+        tasks.append({"id":"relax","text":"10 min oddychania 4-7-8 wieczorem (HRV poniżej normy)","cat":"regeneracja","icon":"🧘"})
+    if rhr and base_rhr and rhr > base_rhr + 5:
+        tasks.append({"id":"recovery","text":"Unikaj intensywności — tętno podwyższone","cat":"regeneracja","icon":"❤️"})
+
+    # Pływanie — stroje suche po wyjściu
+    if goal == "swimming":
+        tasks.append({"id":"swim_prep","text":"Spakuj torbę na basen","cat":"przygotowanie","icon":"🎒"})
+
+    return tasks
+
+
 def analyze(history, goal="maintain"):
     if not history:
         return {"empty": True}
@@ -295,6 +359,7 @@ def analyze(history, goal="maintain"):
         "consistency": sleep_consistency(history),
         "insights": insights(history, base),
         "action_plans": action_plans(today, ready, base, goal),
+        "daily_goals": daily_goals(today, base, goal),
         "goal": goal,
         "goals_catalog": GOALS,
         "history": history,

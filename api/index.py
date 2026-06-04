@@ -243,19 +243,33 @@ o trening, sen, regenerację, odżywianie, motywację, interpretację dzisiejszy
 "czy mogę dziś biegać", "jak poprawić sen", a także zwykłe pytania okołozdrowotne. Zawsze opieraj się na konkretnych
 liczbach z danych (podane w wiadomości), a gdy danych brak — powiedz to wprost, nie zgaduj.
 
-Masz też JEDNĄ dodatkową umiejętność: możesz ustawić CEL aplikacji, co dopasowuje plany i statystyki.
-Dostępne cele (id): maintain, running, cycling, strength, weight_loss, sleep.
-Gdy użytkownik wyraźnie chce się na czymś skupić (np. "chcę zacząć biegać"), dopytaj o 1-2 szczegóły
-(jak często? jaki dystans/czas?), a gdy masz dość informacji — potwierdź naturalnie i ustaw cel, dołączając
-na samym końcu odpowiedzi ukryty blok (użytkownik go nie widzi):
-<<SET_GOAL:{"goal":"running","note":"3x w tygodniu, cel 5km"}>>
+Masz też JEDNĄ dodatkową umiejętność: możesz ustawić CEL aplikacji, co natychmiast dopasowuje plany treningowe, statystyki i widgety.
+Dostępne cele (id i etykiety):
+  maintain = Utrzymanie formy
+  running = Bieganie
+  cycling = Rower
+  swimming = Pływanie
+  strength = Siła
+  weight_loss = Redukcja wagi
+  sleep = Lepszy sen
 
-Nie wstawiaj bloku przy zwykłej rozmowie ani zanim potwierdzisz. Nie diagnozujesz chorób — sugerujesz, co dane mogą oznaczać."""
+ZASADA USTAWIANIA CELU:
+1. Gdy użytkownik chce się skupić na nowej aktywności, dopytaj o 1-2 szczegóły (jak często? jak długo?).
+2. Gdy masz dość informacji — potwierdź w tekście i KONIECZNIE dołącz na samym końcu odpowiedzi ten blok (użytkownik go nie widzi, apka go przetwarza automatycznie):
+<<SET_GOAL:{"goal":"ID_CELU","note":"szczegóły"}>>
+3. WAŻNE: bez tego bloku aplikacja NIE zmieni celu. Zawsze go dołącz gdy potwierdzasz zmianę.
+4. Nie wstawiaj bloku przy zwykłej rozmowie — tylko gdy faktycznie potwierdzasz zmianę celu.
+
+Nie diagnozujesz chorób — sugerujesz, co dane mogą oznaczać."""
 
 GOAL_KEYWORDS = {
-    "running": ["biega", "bieg", "bieganie"], "cycling": ["rower", "kolarz"],
-    "strength": ["siłow", "siła", "mięśni", "masę"], "weight_loss": ["schud", "wagi", "tłuszcz", "redukc"],
-    "sleep": ["sen", "spać", "wysyp"], "maintain": ["utrzyma", "formę"],
+    "swimming":   ["pływa", "pływanie", "basen", "kraul", "swim"],
+    "running":    ["biega", "bieg", "bieganie"],
+    "cycling":    ["rower", "kolarz", "jazda"],
+    "strength":   ["siłow", "siła", "mięśni", "masę", "kulturyst"],
+    "weight_loss":["schud", "wagi", "tłuszcz", "redukc", "odchud"],
+    "sleep":      ["sen ", "spać", "wysyp", "zasypia"],
+    "maintain":   ["utrzyma", "formę"],
 }
 
 
@@ -466,6 +480,20 @@ def cron_reminders():
 
     store_set("reminder_state", state)
     return jsonify({"ok": True, "sent": sent, "time": hm_now})
+
+
+@app.route("/api/goals/check", methods=["GET", "POST"])
+def goals_check():
+    """Zaznaczone zadania na dziś (klucz = data YYYY-MM-DD)."""
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    today_key = f"goals_{datetime.now(TZ).strftime('%Y-%m-%d')}"
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        checked = data.get("checked", [])
+        store_set(today_key, checked)
+        return jsonify({"ok": True, "checked": checked})
+    return jsonify({"checked": store_get(today_key, [])})
 
 
 @app.get("/api/ping")

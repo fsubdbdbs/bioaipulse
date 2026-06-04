@@ -62,8 +62,13 @@ async function enterApp() {
   render();
 }
 async function loadData() {
-  State.data = await api(`/api/data?goal=${State.goal}`);
-  State.report = await api("/api/report").catch(()=>null);
+  [State.data, State.report] = await Promise.all([
+    api(`/api/data?goal=${State.goal}`),
+    api("/api/report").catch(()=>null),
+  ]);
+  // zaznaczone cele na dziś
+  const ch = await api("/api/goals/check").catch(()=>({checked:[]}));
+  State.checkedGoals = ch.checked || [];
 }
 
 /* RINGS */
@@ -113,7 +118,7 @@ const HERO_METRICS = {
   hrv:         {title:"HRV", tag:()=>"regeneracja", val:d=>d.today.hrv_rmssd, big:v=>num(v), sub:()=>"ms (RMSSD)", pct:(d,v)=>v/((d.baselines.hrv||60)*1.5)*100, color:()=>"#2dd4a7"},
   cardio_load: {title:"Obciążenie kardio", tag:()=>"trening", val:d=>d.today.cardio_load, big:v=>num(v), sub:()=>"Cardio Load", pct:(d,v)=>v/200*100, color:()=>"#f5a524"},
 };
-const DEFAULT_LAYOUT = ["hero","coach_tip","activity","sleep","vitals","zones","hr247"];
+const DEFAULT_LAYOUT = ["hero","goals_today","coach_tip","activity","sleep","vitals","zones","hr247"];
 
 function wHero(d) {
   const m = HERO_METRICS[State.heroMetric] || HERO_METRICS.readiness;
@@ -168,17 +173,64 @@ function wCoachTip(d){ const sport=d.action_plans.find(p=>p.id==="sport"), ins=(
   if(ins) card.appendChild(el(`<div class="ct-row"><span class="ct-ic">${ins.icon}</span><div>${ins.title}</div></div>`));
   const ask=el(`<button class="btn ghost ask">Zapytaj coacha →</button>`); ask.addEventListener("click",()=>switchTab("coach")); card.appendChild(ask); return card; }
 
+/* ---- WIDGET: Cele na dziś ---- */
+function wGoalsToday(d) {
+  const tasks = d.daily_goals || [];
+  if (!tasks.length) return null;
+  const checked = State.checkedGoals || [];
+  const done = tasks.filter(t => checked.includes(t.id)).length;
+  const pct = Math.round(done / tasks.length * 100);
+
+  const card = el(`<div class="card"><h3>Cele na dziś</h3>
+    <div class="goals-progress">
+      <div class="gp-bar"><i style="width:${pct}%"></i></div>
+      <span class="gp-lbl">${done}/${tasks.length}</span>
+    </div>
+    <div class="goals-today" id="gtList"></div>
+  </div>`);
+
+  const list = card.querySelector("#gtList");
+  tasks.forEach(t => {
+    const isDone = checked.includes(t.id);
+    const row = el(`<div class="gtask ${isDone ? "done" : ""}" data-id="${t.id}">
+      <span class="gt-ic">${t.icon}</span>
+      <div style="flex:1"><div class="gt-text">${t.text}</div><div class="gt-cat">${t.cat}</div></div>
+      <span class="gt-check">${isDone ? "✓" : ""}</span>
+    </div>`);
+    row.addEventListener("click", () => toggleGoal(t.id, card, d));
+    list.appendChild(row);
+  });
+  return card;
+}
+
+async function toggleGoal(id, card, d) {
+  const ch = State.checkedGoals || [];
+  const idx = ch.indexOf(id);
+  if (idx >= 0) ch.splice(idx, 1); else ch.push(id);
+  State.checkedGoals = ch;
+  // persist
+  api("/api/goals/check", { method: "POST", body: JSON.stringify({ checked: ch }) }).catch(() => {});
+  // re-render just this widget
+  const fresh = wGoalsToday(d);
+  if (fresh && card.parentNode) card.parentNode.replaceChild(fresh, card);
+}
+
 function wWorkoutMini(d){ let last=null; d.history.slice(-7).forEach(e=>(e.workouts||[]).forEach(w=>last=w)); if(!last) return null;
   const c=el(`<div class="card"><h3>Ostatni trening</h3></div>`);
   const row=el(`<div class="wk" style="margin:0"><div class="we">${WK_EMOJI[last.type]||"🏅"}</div><div class="wmain"><div class="wtitle">${last.type}</div><div class="wsub">${fmtDate(last.start)} · ${last.duration_min} min · ${last.avg_hr} bpm</div></div><div class="wstat"><div class="wbig">${last.distance_km?num(last.distance_km,1):last.duration_min}</div><div class="wlbl">${last.distance_km?"km":"min"}</div></div></div>`);
   row.addEventListener("click",()=>showWorkout(last)); c.appendChild(row); return c; }
 
 const WIDGETS = {
-  hero:{title:"Główny wskaźnik",render:wHero}, coach_tip:{title:"Porada coacha",render:wCoachTip},
-  activity:{title:"Aktywność",render:wActivity}, sleep:{title:"Sen",render:wSleep},
-  vitals:{title:"Parametry",render:wVitals}, zones:{title:"Strefy tętna",render:wZones},
-  hr247:{title:"Tętno 24/7",render:wHr247}, insights:{title:"Spostrzeżenia",render:wInsights},
-  workout:{title:"Ostatni trening",render:wWorkoutMini},
+  hero:       {title:"Główny wskaźnik",  render:wHero},
+  goals_today:{title:"Cele na dziś",     render:wGoalsToday},
+  coach_tip:  {title:"Porada coacha",    render:wCoachTip},
+  activity:   {title:"Aktywność",        render:wActivity},
+  sleep:      {title:"Sen",              render:wSleep},
+  vitals:     {title:"Parametry",        render:wVitals},
+  zones:      {title:"Strefy tętna",     render:wZones},
+  hr247:      {title:"Tętno 24/7",       render:wHr247},
+  insights:   {title:"Spostrzeżenia",    render:wInsights},
+  workout:    {title:"Ostatni trening",  render:wWorkoutMini},
 };
 
 function renderToday() {
