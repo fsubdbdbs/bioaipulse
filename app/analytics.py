@@ -5,6 +5,9 @@ Zasada: jeśli opaska podaje gotowy wynik (Daily Readiness, Sleep Score) —
 używamy GO BEZ przeliczania. Nasze analizy służą tylko do WYJAŚNIENIA
 ("co na to wpłynęło") oraz do rzeczy, których opaska nie liczy:
 baseline, regularność snu, ostrzeżenia z trendów, plany działania pod cel.
+
+Cele są w pełni dynamiczne — coach AI tworzy dowolny cel z planem,
+który jest tu przechowywany i używany do generowania planów i zadań.
 """
 
 from __future__ import annotations
@@ -40,36 +43,69 @@ def _median(xs):
 
 
 # ---------------------------------------------------------------------------
+# Katalog celów — predefiniowane + dynamiczne od coacha
+# ---------------------------------------------------------------------------
+
+GOALS = {
+    "maintain":   {"label": "Utrzymanie formy", "emoji": "⚖️"},
+    "running":    {"label": "Bieganie",          "emoji": "🏃"},
+    "cycling":    {"label": "Rower",             "emoji": "🚴"},
+    "swimming":   {"label": "Pływanie",          "emoji": "🏊"},
+    "strength":   {"label": "Siła",              "emoji": "🏋️"},
+    "weight_loss":{"label": "Redukcja wagi",     "emoji": "🔥"},
+    "sleep":      {"label": "Lepszy sen",        "emoji": "😴"},
+}
+
+
+def build_goals_catalog(custom_goals: dict = None) -> dict:
+    """Łączy predefiniowane cele z dynamicznymi stworzonymi przez coacha."""
+    catalog = {k: dict(v) for k, v in GOALS.items()}
+    if custom_goals:
+        for gid, gdata in custom_goals.items():
+            catalog[gid] = {
+                "label":              gdata.get("label", gid),
+                "emoji":              gdata.get("emoji", "🎯"),
+                "custom":             True,
+                "plan_hard":          gdata.get("plan_hard", []),
+                "plan_mid":           gdata.get("plan_mid", []),
+                "plan_easy":          gdata.get("plan_easy", []),
+                "plan_headline_hard": gdata.get("plan_headline_hard", "Wysoka gotowość"),
+                "plan_headline_mid":  gdata.get("plan_headline_mid", "Umiarkowanie"),
+                "plan_headline_easy": gdata.get("plan_headline_easy", "Regeneracja"),
+                "daily_task":         gdata.get("daily_task", ""),
+            }
+    return catalog
+
+
+# ---------------------------------------------------------------------------
 # Baseline
 # ---------------------------------------------------------------------------
 
 def baselines(history):
     past = history[:-1] if len(history) > 1 else history
     return {
-        "rhr":   _median(_vals(past, lambda e: e.get("resting_hr_bpm"))),
-        "hrv":   _median(_vals(past, lambda e: e.get("hrv_rmssd"))),
-        "sleep": _median(_vals(past, lambda e: _sleep(e).get("total_minutes"))),
-        "steps": _median(_vals(past, lambda e: e.get("steps"))),
-        "spo2":  _median(_vals(past, lambda e: e.get("spo2_pct"))),
-        "resp":  _median(_vals(past, lambda e: e.get("respiration_rate"))),
-        "readiness": _median(_vals(past, lambda e: (e.get("daily_readiness") or {}).get("score"))),
+        "rhr":         _median(_vals(past, lambda e: e.get("resting_hr_bpm"))),
+        "hrv":         _median(_vals(past, lambda e: e.get("hrv_rmssd"))),
+        "sleep":       _median(_vals(past, lambda e: _sleep(e).get("total_minutes"))),
+        "steps":       _median(_vals(past, lambda e: e.get("steps"))),
+        "spo2":        _median(_vals(past, lambda e: e.get("spo2_pct"))),
+        "resp":        _median(_vals(past, lambda e: e.get("respiration_rate"))),
+        "readiness":   _median(_vals(past, lambda e: (e.get("daily_readiness") or {}).get("score"))),
         "sleep_score": _median(_vals(past, lambda e: _sleep(e).get("sleep_score"))),
     }
 
 
 # ---------------------------------------------------------------------------
-# Readiness — bierzemy wprost z urządzenia, dodajemy tylko wyjaśnienie
+# Readiness — wprost z urządzenia
 # ---------------------------------------------------------------------------
 
 def readiness(entry, base):
     dev = entry.get("daily_readiness") or {}
     score = dev.get("score")
     label = dev.get("label")
-
     if score is None:
         return {"score": None, "label": "brak danych", "source": "none",
                 "summary": "Opaska nie przekazała wyniku gotowości."}
-
     if score >= 80:
         summary = "Organizm dobrze zregenerowany — możesz pozwolić sobie na mocniejszy trening."
     elif score >= 60:
@@ -78,12 +114,10 @@ def readiness(entry, base):
         summary = "Regeneracja niepełna — lepiej lżejszy dzień."
     else:
         summary = "Niska gotowość. Organizm potrzebuje odpoczynku."
-
     return {"score": score, "label": label or "", "source": "device", "summary": summary}
 
 
 def readiness_factors(entry, base):
-    """Jakościowe wyjaśnienie — co podbiło/obniżyło gotowość. NIE sumuje się do wyniku."""
     out = []
     total = _sleep(entry).get("total_minutes")
     if total is not None:
@@ -139,7 +173,7 @@ def sleep_consistency(history):
 
 
 # ---------------------------------------------------------------------------
-# Insights / ostrzeżenia
+# Insights
 # ---------------------------------------------------------------------------
 
 def insights(history, base):
@@ -152,7 +186,7 @@ def insights(history, base):
     rhrs = _vals(last3, lambda e: e.get("resting_hr_bpm"))
     if len(rhrs) == 3 and rhrs[0] < rhrs[1] < rhrs[2]:
         out.append({"type": "warning", "icon": "⚠️", "title": "Tętno spoczynkowe rośnie 3 dni z rzędu",
-                    "text": f"{rhrs[0]:.0f} → {rhrs[1]:.0f} → {rhrs[2]:.0f} bpm. Częsty sygnał przemęczenia lub nadchodzącej infekcji."})
+                    "text": f"{rhrs[0]:.0f} → {rhrs[1]:.0f} → {rhrs[2]:.0f} bpm. Częsty sygnał przemęczenia lub infekcji."})
 
     hrvs = _vals(last3, lambda e: e.get("hrv_rmssd"))
     if len(hrvs) == 3 and hrvs[0] > hrvs[1] > hrvs[2]:
@@ -167,53 +201,43 @@ def insights(history, base):
     skin = today.get("skin_temp_variation_c")
     if skin is not None and skin >= 0.5:
         out.append({"type": "warning", "icon": "🌡️", "title": "Podwyższona temperatura skóry",
-                    "text": f"{skin:+.1f}°C względem Twojej normy. Czasem wczesny sygnał infekcji — obserwuj."})
+                    "text": f"{skin:+.1f}°C względem normy. Możliwy wczesny sygnał infekcji."})
 
     spo2 = today.get("spo2_pct")
     if spo2 is not None and spo2 < 94:
         out.append({"type": "warning", "icon": "🫁", "title": "Niższe natlenienie (SpO2)",
-                    "text": f"SpO2 {spo2}% w nocy. Pojedynczy odczyt nie jest groźny, ale warto obserwować."})
+                    "text": f"SpO2 {spo2}% w nocy. Warto obserwować."})
 
     week = history[-7:]
     steps = _vals(week, lambda e: e.get("steps"))
     if steps and base.get("steps") and mean(steps) > base["steps"] * 1.1:
-        out.append({"type": "good", "icon": "🔥", "title": "Aktywność powyżej Twojej normy",
-                    "text": f"Średnio {mean(steps):,.0f} kroków/dzień w tym tygodniu. Trzymaj tempo."})
+        out.append({"type": "good", "icon": "🔥", "title": "Aktywność powyżej normy",
+                    "text": f"Średnio {mean(steps):,.0f} kroków/dzień — powyżej Twojej normy.".replace(",", " ")})
 
     hrv = today.get("hrv_rmssd")
     if hrv and base.get("hrv") and hrv > base["hrv"] + 5:
         out.append({"type": "good", "icon": "💪", "title": "Świetna regeneracja",
-                    "text": f"HRV dziś {hrv:.0f}ms, powyżej normy. Dobry dzień na mocniejszy trening."})
+                    "text": f"HRV dziś {hrv:.0f}ms — powyżej Twojej normy. Dobry dzień na mocny trening."})
 
     return out
 
 
 # ---------------------------------------------------------------------------
-# Plany działania — zależne od CELU (goal)
+# Plany działania — w pełni dynamiczne (z katalogu celu)
 # ---------------------------------------------------------------------------
 
-GOALS = {
-    "maintain":   {"label": "Utrzymanie formy", "emoji": "⚖️"},
-    "running":    {"label": "Bieganie", "emoji": "🏃"},
-    "cycling":    {"label": "Rower", "emoji": "🚴"},
-    "swimming":   {"label": "Pływanie", "emoji": "🏊"},
-    "strength":   {"label": "Siła", "emoji": "🏋️"},
-    "weight_loss":{"label": "Redukcja wagi", "emoji": "🔥"},
-    "sleep":      {"label": "Lepszy sen", "emoji": "😴"},
-}
-
-
-def action_plans(entry, ready, base, goal="maintain"):
+def action_plans(entry, ready, base, goal="maintain", goals_catalog: dict = None):
     score = ready.get("score") or 50
     total = _sleep(entry).get("total_minutes")
     sleep_h = total / 60 if total else None
+    catalog = goals_catalog or build_goals_catalog()
 
-    # Plan 1: utrzymaj
-    maintain = ["Trzymaj stałe pory snu (±30 min).", "8 000–10 000 kroków rozłożone w ciągu dnia."]
+    # Plan 1: Utrzymaj
+    maintain = ["Trzymaj stałe pory snu (±30 min).", "8 000–10 000 kroków w ciągu dnia."]
     if sleep_h and sleep_h >= 7:
         maintain.insert(0, f"Sen {sleep_h:.1f}h jest dobry — pilnuj go.")
 
-    # Plan 2: popraw najsłabszy element
+    # Plan 2: Popraw najsłabszy element
     factors = readiness_factors(entry, base)
     weakest = min(factors, key=lambda f: {"bad": 0, "ok": 1, "good": 2}[f["status"]]) if factors else None
     improve = []
@@ -222,131 +246,153 @@ def action_plans(entry, ready, base, goal="maintain"):
         if "Sen" in nm or "Sleep" in nm:
             improve = ["Cel: +45 min snu. Wygaś ekrany 60 min przed snem.", "Ostatnia kawa ≥8h przed snem.", "Sypialnia 18–19°C, ciemno."]
         elif nm == "HRV":
-            improve = ["Dziś trening regeneracyjny zamiast intensywnego.", "10 min oddychania 4-7-8 wieczorem.", "Nawodnienie, bez alkoholu."]
+            improve = ["Dziś trening regeneracyjny.", "10 min oddychania 4-7-8 wieczorem.", "Nawodnienie, bez alkoholu."]
         elif "Tętno" in nm:
             improve = ["Odpuść interwały, spokojne cardio.", "Więcej wody i elektrolitów.", "Jeśli jutro też wysokie — dzień wolny."]
         elif "Temp" in nm:
-            improve = ["Podwyższona temp. skóry — odpuść mocny trening.", "Więcej snu i płynów.", "Obserwuj, czy nie idzie infekcja."]
+            improve = ["Odpuść mocny trening.", "Więcej snu i płynów.", "Obserwuj, czy nie idzie infekcja."]
     if not improve:
         improve = ["Dorzuć 1 trening więcej niż zwykle.", "Zwiększ cel kroków o 1 000."]
 
-    # Plan 3: SPORT — dobrany do CELU i gotowości
-    sport = _sport_plan(goal, score)
+    # Plan 3: Trening — z dynamicznego katalogu
+    goal_data = catalog.get(goal) or catalog.get("maintain", {})
+    sport_headline, sport_items = _sport_plan(score, goal_data)
+    goal_emoji = goal_data.get("emoji", "🎯")
 
     return [
-        {"id": "maintain", "title": "Utrzymaj", "icon": "⚖️", "items": maintain},
-        {"id": "improve", "title": "Popraw się", "icon": "📈", "items": improve},
-        {"id": "sport", "title": "Trening", "icon": GOALS.get(goal, GOALS["maintain"])["emoji"], "headline": sport[0], "items": sport[1]},
+        {"id": "maintain", "title": "Utrzymaj",  "icon": "⚖️",        "items": maintain},
+        {"id": "improve",  "title": "Popraw się", "icon": "📈",        "items": improve},
+        {"id": "sport",    "title": "Trening",    "icon": goal_emoji,  "headline": sport_headline, "items": sport_items},
     ]
 
 
-def _sport_plan(goal, score):
+def _sport_plan(score: int, goal_data: dict):
+    """
+    Generuje plan sportowy z danych celu.
+    Dynamiczne cele (stworzone przez coacha) mają wbudowane plan_hard/mid/easy.
+    Predefiniowane cele mają swoje wbudowane plany jako fallback.
+    """
     hard = score >= 75
-    mid = 50 <= score < 75
-    if goal == "swimming":
+    mid  = 50 <= score < 75
+
+    # Cel dynamiczny od coacha — użyj jego planów bezpośrednio
+    if goal_data.get("plan_hard") and goal_data.get("plan_mid"):
         if hard:
-            return ("Basen — interwały", ["Rozgrzewka 200m spokojnie, potem 6×50m mocno / 30s przerwy.", "Schłodzenie 100m na wznak.", "Nawodnienie — w wodzie nie czujesz potu, ale się pocisz."])
+            return (goal_data.get("plan_headline_hard", "Wysoka gotowość"),
+                    goal_data["plan_hard"])
         if mid:
-            return ("Basen — spokojny dystans", ["30–45 min w spokojnym, stałym tempie.", "Skup się na technice — długi wyciąg, głowa w dół.", "Naprzemiennie krol i grzbiet."])
-        return ("Basen — regeneracja", ["15–20 min spokojnego pływania, mocno odpuść.", "Ruch w wodzie pomaga regeneracji — delikatne tempo.", "Unikaj mocnych sprintów dziś."])
-    if goal == "running":
-        if hard:
-            return ("Bieg — dzień jakościowy", ["Rozbieganie 10 min + 6×400 m szybko / 200 m trucht.", "Rozciąganie łydek i bioder po.", "Nawodnienie i białko w 30 min po."])
-        if mid:
-            return ("Bieg spokojny (strefa 2)", ["30–40 min w tempie rozmownym.", "Skup się na kadencji ~170–180.", "Bez przyspieszania na końcu."])
-        return ("Regeneracja", ["Spacer 30 min zamiast biegu.", "Mobilność bioder i kostek.", "Bieganie jutro."])
-    if goal == "cycling":
-        if hard:
-            return ("Rower — interwały", ["5×3 min mocno / 3 min luźno.", "Rozgrzewka 15 min, schłodzenie 10 min.", "Elektrolity na trasę."])
-        if mid:
-            return ("Rower spokojnie", ["45–60 min strefa 2.", "Stała kadencja 85–95.", "Bez sprintów."])
-        return ("Lekko / regeneracja", ["Spokojne 30 min lub wolne.", "Rozciąganie.", "Mocniej jutro."])
-    if goal == "strength":
-        if hard:
-            return ("Siłownia — dzień ciężki", ["Główny bój 4–5 serii, technika ponad ciężar.", "Akcesoria 3×10–12.", "Białko 1.6–2 g/kg dziś."])
-        if mid:
-            return ("Siłownia — umiarkowanie", ["Ciężar ~70%, więcej powtórzeń.", "Skup na tempie i kontroli.", "Dobra rozgrzewka."])
-        return ("Lekko / mobilność", ["Trening mobilności 20 min.", "Lekkie GPP / core.", "Ciężko jutro."])
-    if goal == "weight_loss":
-        if hard:
-            return ("Spalanie — dzień mocniejszy", ["45–60 min cardio strefa 2–3 + 10 min interwałów.", "Cel kroków: 12 000.", "Deficyt ~300–500 kcal, dużo białka."])
-        if mid:
-            return ("Spalanie — umiarkowanie", ["40 min szybki marsz / rower.", "Cel kroków: 10 000.", "Pilnuj białka i wody."])
-        return ("Lekko, ale w ruchu", ["Długi spacer 45 min.", "Cel kroków: 8 000.", "Nie podkręcaj, regeneruj."])
-    if goal == "sleep":
-        return ("Priorytet: sen", ["Stała pora snu — dziś połóż się o tej samej godzinie.", "Bez ekranów 60 min przed.", "Lekki trening max do wczesnego wieczora."])
-    # maintain
-    if hard:
-        return ("Zielone światło na wysiłek", ["Mocniejszy trening wg uznania.", "Albo bieg tempowy 30–40 min.", "Technika przede wszystkim."])
-    if mid:
-        return ("Umiarkowany wysiłek", ["Spokojne cardio 45 min strefa 2.", "Albo trucht + mobilność.", "Bez maksymalnych interwałów."])
-    return ("Dzień regeneracji", ["Spacer 30–40 min.", "Rozciąganie / joga 15 min.", "Sen priorytetem."])
+            return (goal_data.get("plan_headline_mid", "Umiarkowanie"),
+                    goal_data["plan_mid"])
+        return (goal_data.get("plan_headline_easy", "Regeneracja"),
+                goal_data.get("plan_easy", ["Odpoczynek i lekki ruch."]))
+
+    # Predefiniowane cele — fallback wbudowany
+    label = goal_data.get("label", "")
+    emoji = goal_data.get("emoji", "")
+
+    if emoji == "🏃" or "Biegan" in label:
+        if hard:  return ("Bieg — dzień jakościowy", ["6×400 m szybko / 200 m trucht.", "Rozciąganie po.", "Białko w 30 min po."])
+        if mid:   return ("Bieg spokojny (strefa 2)", ["30–40 min w tempie rozmownym.", "Kadencja ~170–180 spm.", "Bez przyspieszania na końcu."])
+        return ("Regeneracja", ["Spacer 30 min zamiast biegu.", "Mobilność.", "Bieganie jutro."])
+
+    if emoji == "🚴" or "Rower" in label:
+        if hard:  return ("Rower — interwały", ["5×3 min mocno / 3 min luźno.", "Elektrolity.", "Schłodzenie 10 min."])
+        if mid:   return ("Rower spokojnie", ["45–60 min strefa 2.", "Kadencja 85–95.", "Bez sprintów."])
+        return ("Lekko", ["Spokojne 30 min.", "Rozciąganie.", "Mocniej jutro."])
+
+    if emoji == "🏊" or "Pływan" in label:
+        if hard:  return ("Basen — interwały", ["6×50 m mocno / 30 s przerwy.", "Schłodzenie 100 m na wznak.", "Nawodnienie."])
+        if mid:   return ("Basen — dystans", ["30–45 min spokojne tempo.", "Fokus na technice.", "Naprzemiennie krol i grzbiet."])
+        return ("Basen — regeneracja", ["15–20 min bardzo spokojnie.", "Delikatne tempo.", "Unikaj sprintów."])
+
+    if emoji == "🏋️" or "Siła" in label:
+        if hard:  return ("Siłownia — dzień ciężki", ["4–5 serii, technika ponad ciężar.", "Akcesoria 3×10–12.", "Białko 1.6–2 g/kg."])
+        if mid:   return ("Siłownia — umiarkowanie", ["Ciężar ~70%, więcej powtórzeń.", "Fokus na tempie.", "Dobra rozgrzewka."])
+        return ("Mobilność", ["Trening mobilności 20 min.", "Lekkie core.", "Ciężko jutro."])
+
+    if emoji == "🔥" or "Redukcja" in label or "wagi" in label.lower():
+        if hard:  return ("Spalanie — mocno", ["45 min cardio + 10 min interwałów.", "Cel 12 000 kroków.", "Deficyt ~400 kcal."])
+        if mid:   return ("Spalanie — umiarkowanie", ["40 min marsz / rower.", "Cel 10 000 kroków.", "Pilnuj białka."])
+        return ("Lekko, ale w ruchu", ["Spacer 45 min.", "Cel 8 000 kroków.", "Regeneruj."])
+
+    if emoji == "😴" or "sen" in label.lower():
+        return ("Priorytet: sen", ["Połóż się przed 23:00.", "Bez ekranów 60 min przed.", "Lekki trening max do wczesnego wieczora."])
+
+    # maintain / nieznany
+    if hard:  return ("Zielone światło", ["Mocniejszy trening wg uznania.", "Bieg tempowy 30–40 min.", "Technika przede wszystkim."])
+    if mid:   return ("Umiarkowany wysiłek", ["Spokojne cardio 45 min.", "Trucht + mobilność.", "Bez max interwałów."])
+    return ("Regeneracja", ["Spacer 30–40 min.", "Rozciąganie / joga.", "Sen priorytetem."])
 
 
 # ---------------------------------------------------------------------------
-# Główna funkcja
+# Zadania na dziś — dynamiczne (z katalogu celu)
 # ---------------------------------------------------------------------------
 
-def daily_goals(entry, base, goal="maintain") -> list[dict]:
-    """Konkretne zadania na dziś — generowane z danych, dopasowane do celu."""
+def daily_goals(entry, base, goal="maintain", goals_catalog: dict = None) -> list[dict]:
+    """Konkretne zadania na dziś, dopasowane do aktywnego celu i danych."""
     tasks = []
+    catalog = goals_catalog or build_goals_catalog()
+    goal_data = catalog.get(goal) or {}
     score = (entry.get("daily_readiness") or {}).get("score") or 50
     sleep_min = _sleep(entry).get("total_minutes") or 0
     steps = entry.get("steps") or 0
     hrv = entry.get("hrv_rmssd")
     rhr = entry.get("resting_hr_bpm")
     base_rhr = base.get("rhr")
+    emoji = goal_data.get("emoji", "🎯")
+    label = goal_data.get("label", goal)
 
-    # Cel treningowy — dobrany do sportu + gotowości
-    if goal == "swimming":
-        if score >= 75:
-            tasks.append({"id":"swim","text":"Basen: 6×50m interwałów + rozgrzewka 200m","cat":"trening","icon":"🏊"})
-        else:
-            tasks.append({"id":"swim","text":"Basen: 30 min spokojny dystans, fokus na technice","cat":"trening","icon":"🏊"})
+    # Główne zadanie treningowe — z dynamicznego celu lub wbudowane
+    if goal_data.get("daily_task"):
+        # Cel dynamiczny — zadanie stworzone przez coacha
+        task_text = goal_data["daily_task"]
+        if score < 50:
+            task_text += " (lżej — regeneracja)"
+        tasks.append({"id": "main_goal", "text": task_text, "cat": "trening", "icon": emoji})
     elif goal == "running":
         tasks.append({"id":"run","text":"Bieg "+("30–40 min tempo" if score>=75 else "20–30 min strefa 2"),"cat":"trening","icon":"🏃"})
     elif goal == "cycling":
         tasks.append({"id":"bike","text":"Rower "+("interwały 5×3 min" if score>=75 else "45 min strefa 2"),"cat":"trening","icon":"🚴"})
+    elif goal == "swimming":
+        tasks.append({"id":"swim","text":"Basen: "+("6×50m interwałów + rozgrzewka 200m" if score>=75 else "30 min spokojny dystans"),"cat":"trening","icon":"🏊"})
     elif goal == "strength":
-        tasks.append({"id":"gym","text":"Siłownia: "+("ciężki dzień główne ćwiczenia" if score>=75 else "średnia intensywność, technika"),"cat":"trening","icon":"🏋️"})
+        tasks.append({"id":"gym","text":"Siłownia: "+("ciężki dzień" if score>=75 else "średnia intensywność, technika"),"cat":"trening","icon":"🏋️"})
     elif goal == "weight_loss":
         tasks.append({"id":"cardio","text":"Cardio 40–50 min + cel 12 000 kroków","cat":"trening","icon":"🔥"})
     elif goal == "sleep":
         tasks.append({"id":"bedtime","text":"Połóż się spać przed 23:00 (stała pora)","cat":"sen","icon":"🌙"})
     else:
-        if score >= 75:
-            tasks.append({"id":"train","text":"Dowolny trening 30–45 min","cat":"trening","icon":"💪"})
-        else:
-            tasks.append({"id":"walk","text":"Spacer 30 min — regeneracja","cat":"ruch","icon":"🚶"})
+        tasks.append({"id":"train","text":("Trening 30–45 min" if score>=75 else "Spacer 30 min — regeneracja"),"cat":"ruch","icon":"💪"})
 
     # Kroki
     steps_goal = 12000 if goal == "weight_loss" else 8000
     if steps < steps_goal:
-        tasks.append({"id":"steps","text":f"Dojdź do {steps_goal:,} kroków (masz {steps:,})".replace(",","."),"cat":"ruch","icon":"👟"})
+        tasks.append({"id":"steps","text":f"Dojdź do {steps_goal} kroków (masz {steps})","cat":"ruch","icon":"👟"})
 
     # Woda — zawsze
     tasks.append({"id":"water","text":"Wypij min. 2 litry wody","cat":"zdrowie","icon":"💧"})
 
     # Sen jeśli niedobór
     if sleep_min < 390:
-        tasks.append({"id":"sleep","text":"Dziś połóż się wcześniej — dobierz sen","cat":"sen","icon":"😴"})
+        tasks.append({"id":"sleep_more","text":"Dziś połóż się wcześniej — dobierz sen","cat":"sen","icon":"😴"})
 
-    # HRV/RHR — regeneracja
+    # HRV / RHR ostrzeżenie
     if hrv and base.get("hrv") and hrv < base["hrv"] - 8:
         tasks.append({"id":"relax","text":"10 min oddychania 4-7-8 wieczorem (HRV poniżej normy)","cat":"regeneracja","icon":"🧘"})
     if rhr and base_rhr and rhr > base_rhr + 5:
         tasks.append({"id":"recovery","text":"Unikaj intensywności — tętno podwyższone","cat":"regeneracja","icon":"❤️"})
 
-    # Pływanie — stroje suche po wyjściu
-    if goal == "swimming":
-        tasks.append({"id":"swim_prep","text":"Spakuj torbę na basen","cat":"przygotowanie","icon":"🎒"})
-
     return tasks
 
 
-def analyze(history, goal="maintain"):
+# ---------------------------------------------------------------------------
+# Główna funkcja
+# ---------------------------------------------------------------------------
+
+def analyze(history, goal="maintain", custom_goals: dict = None):
     if not history:
         return {"empty": True}
+    catalog = build_goals_catalog(custom_goals)
     base = baselines(history)
     today = history[-1]
     ready = readiness(today, base)
@@ -358,9 +404,9 @@ def analyze(history, goal="maintain"):
         "readiness_factors": readiness_factors(today, base),
         "consistency": sleep_consistency(history),
         "insights": insights(history, base),
-        "action_plans": action_plans(today, ready, base, goal),
-        "daily_goals": daily_goals(today, base, goal),
+        "action_plans": action_plans(today, ready, base, goal, goals_catalog=catalog),
+        "daily_goals": daily_goals(today, base, goal, goals_catalog=catalog),
         "goal": goal,
-        "goals_catalog": GOALS,
+        "goals_catalog": catalog,
         "history": history,
     }

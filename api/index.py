@@ -206,7 +206,10 @@ def api_data():
     history, is_demo = load_history()
     if not history:
         return jsonify({"empty": True, "is_demo": is_demo})
-    bundle = analytics.analyze(history, goal=goal)
+
+    # Pobierz zapisane dynamiczne cele i wstrzyknij do analytics
+    custom_goals = store_get("custom_goals", {})
+    bundle = analytics.analyze(history, goal=goal, custom_goals=custom_goals)
     bundle["is_demo"] = is_demo
     return jsonify(bundle)
 
@@ -238,29 +241,46 @@ def api_export():
 
 CHAT_SYSTEM = """Jesteś Pulse — osobisty coach zdrowia i rozmówca Franka. Mówisz po polsku, naturalnie, konkretnie, bez lania wody.
 
-Jesteś PRAWDZIWYM asystentem AI, nie zestawem przycisków. Rozmawiaj swobodnie i odpowiadaj na DOWOLNE pytania:
-o trening, sen, regenerację, odżywianie, motywację, interpretację dzisiejszych danych, "co to znaczy że mam HRV X",
-"czy mogę dziś biegać", "jak poprawić sen", a także zwykłe pytania okołozdrowotne. Zawsze opieraj się na konkretnych
-liczbach z danych (podane w wiadomości), a gdy danych brak — powiedz to wprost, nie zgaduj.
+Jesteś PRAWDZIWYM asystentem AI. Rozmawiaj swobodnie o wszystkim: trening, sen, regeneracja, odżywianie, interpretacja danych ("co znaczy HRV X?", "czy mogę dziś biegać?"), motywacja, styl życia. Zawsze opieraj się na liczbach z danych (podane w każdej wiadomości).
 
-Masz też JEDNĄ dodatkową umiejętność: możesz ustawić CEL aplikacji, co natychmiast dopasowuje plany treningowe, statystyki i widgety.
-Dostępne cele (id i etykiety):
-  maintain = Utrzymanie formy
-  running = Bieganie
-  cycling = Rower
-  swimming = Pływanie
-  strength = Siła
-  weight_loss = Redukcja wagi
-  sleep = Lepszy sen
+TWOJA NAJWAŻNIEJSZA UMIEJĘTNOŚĆ — TWORZENIE DOWOLNEGO CELU:
+Użytkownik może powiedzieć COKOLWIEK: bieganie, pływanie, skakanka, karate, wspinaczka, taniec, joga, spacery z psem — dosłownie cokolwiek. Twoim zadaniem jest stworzyć dla tej aktywności spersonalizowany cel.
 
-ZASADA USTAWIANIA CELU:
-1. Gdy użytkownik chce się skupić na nowej aktywności, dopytaj o 1-2 szczegóły (jak często? jak długo?).
-2. Gdy masz dość informacji — potwierdź w tekście i KONIECZNIE dołącz na samym końcu odpowiedzi ten blok (użytkownik go nie widzi, apka go przetwarza automatycznie):
-<<SET_GOAL:{"goal":"ID_CELU","note":"szczegóły"}>>
-3. WAŻNE: bez tego bloku aplikacja NIE zmieni celu. Zawsze go dołącz gdy potwierdzasz zmianę.
-4. Nie wstawiaj bloku przy zwykłej rozmowie — tylko gdy faktycznie potwierdzasz zmianę celu.
+ZASADA (3 kroki):
+1. Dopytaj o 1-2 szczegóły (jak często? jak długo? jaki poziom?).
+2. Gdy masz dość info — potwierdź naturalnie i dołącz na SAMYM KOŃCU blok (użytkownik go nie widzi):
 
-Nie diagnozujesz chorób — sugerujesz, co dane mogą oznaczać."""
+<<SET_GOAL:JSON>>
+
+gdzie JSON to obiekt (bez spacji po <<SET_GOAL:):
+{
+  "goal": "unikalny_id_bez_spacji",
+  "label": "Ładna nazwa po polsku",
+  "emoji": "🎯",
+  "plan_hard": ["zadanie gdy gotowość wysoka","drugie","trzecie"],
+  "plan_mid": ["zadanie gdy gotowość średnia","drugie"],
+  "plan_easy": ["zadanie gdy gotowość niska / regeneracja","drugie"],
+  "plan_headline_hard": "Krótki nagłówek planu",
+  "plan_headline_mid": "Krótki nagłówek",
+  "plan_headline_easy": "Odpoczynek / regeneracja",
+  "daily_task": "Główne zadanie dnia (jedno zdanie)",
+  "note": "szczegóły które podał użytkownik"
+}
+
+PRZYKŁADY poprawnych bloków:
+<<SET_GOAL:{"goal":"rope_jumping","label":"Skakanka","emoji":"🪢","plan_hard":["5 serii 2 min skakania / 1 min przerwy","Ćwicz podwójne obroty","Rozciągnij łydki po"],"plan_mid":["3×1 min skakania / 1 min przerwy","Skup się na technice","Lekkie rozgrzanie przed"],"plan_easy":["10 min lekkiego skakania","Praca nad rytmem","Odpuść intensywność"],"plan_headline_hard":"Skakanka — interwały","plan_headline_mid":"Skakanka — umiarkowanie","plan_headline_easy":"Lekko i technicznie","daily_task":"Skakanka: 5×2 min interwałów (codziennie 20 min)","note":"codziennie 20 minut"}>>
+
+<<SET_GOAL:{"goal":"karate","label":"Karate","emoji":"🥋","plan_hard":["45 min trening kumite","Kata 3 razy z pełną intensywnością","Ćwiczenia siłowe kończyn"],"plan_mid":["30 min kata i techniki","Spokojne kumite z partnerem","Stretching po"],"plan_easy":["Kata 1 raz powoli","Stretching 15 min","Ćwiczenia oddechu"],"plan_headline_hard":"Karate — pełny trening","plan_headline_mid":"Karate — techniki","plan_headline_easy":"Regeneracja i kata","daily_task":"Karate: kata + 20 min kumite","note":"3x w tygodniu"}>>
+
+ZASADY:
+- id: małe litery, podkreślniki (rope_jumping, karate, joga_poranna, taniec_latino)
+- emoji: ZAWSZE dobierz odpowiednie (🪢🥋🧗🕺🧘🤸🏇⛷️🎾🏌️🎯 itd.)
+- plan_hard/mid/easy: minimum 2-3 konkretne zadania, dostosowane do tej aktywności
+- daily_task: jedno zdanie, konkretne (to pojawi się w checkliście na głównym ekranie)
+- KRYTYCZNE: Gdy potwierdzasz zmianę — blok <<SET_GOAL:...>> jest OBOWIĄZKOWY. Bez niego aplikacja nie zmieni celu i ekran główny nie zostanie zaktualizowany. Użytkownik będzie sfrustrowany.
+- Nie wstawiaj bloku przy zwykłej rozmowie — tylko przy finalnym potwierdzeniu.
+
+Nie diagnozujesz chorób."""
 
 GOAL_KEYWORDS = {
     "swimming":   ["pływa", "pływanie", "basen", "kraul", "swim"],
@@ -350,9 +370,26 @@ def api_chat():
     if m:
         try:
             payload = json.loads(m.group(1))
-            g = payload.get("goal")
-            if g in analytics.GOALS:
-                set_goal = {"goal": g, "note": payload.get("note", "")}
+            g = payload.get("goal", "").strip().replace(" ", "_")
+            if g:
+                # Zapisz pełny obiekt celu (dynamiczny lub predefiniowany)
+                custom_goals = store_get("custom_goals", {})
+                custom_goals[g] = {
+                    "goal": g,
+                    "label": payload.get("label", g),
+                    "emoji": payload.get("emoji", "🎯"),
+                    "plan_hard": payload.get("plan_hard", []),
+                    "plan_mid": payload.get("plan_mid", []),
+                    "plan_easy": payload.get("plan_easy", []),
+                    "plan_headline_hard": payload.get("plan_headline_hard", "Wysoka gotowość"),
+                    "plan_headline_mid": payload.get("plan_headline_mid", "Umiarkowanie"),
+                    "plan_headline_easy": payload.get("plan_headline_easy", "Regeneracja"),
+                    "daily_task": payload.get("daily_task", ""),
+                    "note": payload.get("note", ""),
+                }
+                store_set("custom_goals", custom_goals)
+                set_goal = {"goal": g, "label": custom_goals[g]["label"],
+                            "emoji": custom_goals[g]["emoji"], "note": payload.get("note", "")}
         except json.JSONDecodeError:
             pass
         reply = reply[:m.start()].strip()
