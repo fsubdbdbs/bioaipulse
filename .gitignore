@@ -1,0 +1,21 @@
+# Secrets — never commit
+.env
+tokens/
+
+# Data output (ignoruj wszystko OPRÓCZ danych demo — Vercel ich potrzebuje)
+data/*
+!data/demo_metrics.json
+data/store.json
+data/reports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db

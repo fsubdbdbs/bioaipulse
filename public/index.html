@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#070b16" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Pulse" />
+  <title>BioAI-Pulse</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+  <!-- LOGOWANIE -->
+  <div id="login" class="login hidden">
+    <div class="login-card">
+      <div class="login-logo"><img src="/icons/icon-192.png" alt="Pulse" /></div>
+      <h1>BioAI-Pulse</h1>
+      <p class="muted">Twój osobisty analityk zdrowia</p>
+      <div class="pin-dots" id="pinDots"><span></span><span></span><span></span><span></span></div>
+      <div class="pin-error" id="pinError"></div>
+      <div class="keypad" id="keypad">
+        <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+        <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+        <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+        <button class="ghost" data-k="clear">✕</button>
+        <button data-k="0">0</button>
+        <button class="ghost" data-k="del">⌫</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APLIKACJA -->
+  <div id="app" class="app hidden">
+    <div id="demoBanner" class="demo-banner hidden">Tryb demo — przykładowe dane. Po podłączeniu opaski zobaczysz swoje.</div>
+    <main id="view" class="view"></main>
+    <nav class="tabbar">
+      <button class="tab active" data-tab="today"><span class="ti">◎</span><span>Dziś</span></button>
+      <button class="tab" data-tab="trends"><span class="ti">📈</span><span>Trendy</span></button>
+      <button class="tab" data-tab="workouts"><span class="ti">🏃</span><span>Treningi</span></button>
+      <button class="tab" data-tab="coach"><span class="ti">🧠</span><span>Coach</span></button>
+      <button class="tab" data-tab="profile"><span class="ti">⚙︎</span><span>Profil</span></button>
+    </nav>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# BioAI-Pulse — zależności Pythona
+requests
+python-dotenv
+groq
+flask
+pywebpush
