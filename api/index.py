@@ -875,6 +875,141 @@ def goals_check():
     return jsonify({"checked": store_get(today_key, [])})
 
 
+@app.get("/api/food/barcode/<barcode>")
+def food_barcode(barcode):
+    """Open Food Facts — darmowa globalna baza produktów spożywczych."""
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        import requests as _r
+        url = f"https://world.openfoodfacts.org/api/v2/product/{barcode}.json?fields=product_name,brands,nutriments,serving_size,image_front_small_url"
+        resp = _r.get(url, timeout=8, headers={"User-Agent": "BioAI-Pulse/1.0"})
+        if not resp.ok:
+            return jsonify({"ok": False, "error": "Produkt nie znaleziony"}), 404
+        data = resp.json()
+        if data.get("status") != 1:
+            return jsonify({"ok": False, "error": "Nieznany produkt"}), 404
+        p = data.get("product", {})
+        n = p.get("nutriments", {})
+        return jsonify({
+            "ok": True,
+            "name": p.get("product_name", "Nieznany produkt"),
+            "brand": p.get("brands", ""),
+            "serving_size": p.get("serving_size", "100g"),
+            "image": p.get("image_front_small_url", ""),
+            "per_100g": {
+                "calories": round(n.get("energy-kcal_100g") or n.get("energy_100g", 0) / 4.184, 1),
+                "protein": round(n.get("proteins_100g", 0), 1),
+                "carbs":   round(n.get("carbohydrates_100g", 0), 1),
+                "fat":     round(n.get("fat_100g", 0), 1),
+                "fiber":   round(n.get("fiber_100g", 0), 1),
+                "sugar":   round(n.get("sugars_100g", 0), 1),
+                "salt":    round(n.get("salt_100g", 0), 2),
+            }
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/food/analyze-image")
+def food_analyze_image():
+    """Groq Vision — analiza zdjęcia posiłku (gdy brak kodu kreskowego)."""
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    b64 = body.get("image_b64")
+    mime = body.get("mime_type", "image/jpeg")
+    if not b64:
+        return jsonify({"ok": False, "error": "Brak obrazu"}), 400
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        return jsonify({"ok": False, "error": "Brak klucza AI"}), 400
+    try:
+        from groq import Groq as _Groq
+        resp = _Groq(api_key=groq_key).chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                {"type": "text", "text": (
+                    "Przeanalizuj posiłek na zdjęciu. Podaj:\n"
+                    "1. Nazwa potrawy\n"
+                    "2. Szacunkowe kalorie (kcal)\n"
+                    "3. Białko (g), węglowodany (g), tłuszcz (g)\n"
+                    "4. Wielkość porcji\n"
+                    "Odpowiedz po polsku w formacie JSON: "
+                    '{\"name\":\"...\",\"calories\":0,\"protein\":0,\"carbs\":0,\"fat\":0,\"portion\":\"...\"}'
+                )}
+            ]}],
+            max_tokens=200, temperature=0.2,
+        )
+        raw = resp.choices[0].message.content.strip()
+        import re as _re
+        m = _re.search(r"\{.*?\}", raw, _re.S)
+        if m:
+            result = json.loads(m.group())
+            result["ok"] = True
+            result["source"] = "vision_ai"
+            return jsonify(result)
+        return jsonify({"ok": True, "source": "vision_ai", "raw": raw})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/health/analyze-pdf")
+def health_analyze_pdf():
+    """
+    Analiza wyników badań krwi z PDF.
+    Frontend wysyła tekst z PDF (wyciągnięty przez PDF.js lub przez paste).
+    Groq mapuje biomarkery na trendy z opaski.
+    """
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    pdf_text = body.get("text", "")
+    if not pdf_text or len(pdf_text) < 50:
+        return jsonify({"ok": False, "error": "Za mało tekstu z PDF"}), 400
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        return jsonify({"ok": False, "error": "Brak klucza AI"}), 400
+
+    # Pobierz dane biometryczne Franka jako kontekst
+    history, _ = load_history()
+    bundle = analytics.analyze(history) if history else {}
+    base = bundle.get("baselines", {})
+    today = bundle.get("today", {})
+
+    ctx = (
+        f"Dane z opaski: RHR {base.get('rhr')} bpm (norma), "
+        f"HRV {base.get('hrv')} ms, "
+        f"sen śr. {round((base.get('sleep') or 0)/60,1)}h, "
+        f"aktywność OK."
+    )
+
+    try:
+        from groq import Groq as _Groq
+        prompt = (
+            f"Poniżej są wyniki badań krwi Franka (wklejone z PDF):\n\n{pdf_text[:3000]}\n\n"
+            f"Jego dane z opaski dla kontekstu: {ctx}\n\n"
+            "Wyciągnij kluczowe biomarkery (morfologia, lipidogram, glukoza, witaminy itd.). "
+            "Dla każdego biomarkera oceń: w normie / poniżej / powyżej. "
+            "Następnie połącz wyniki z danymi z opaski — np. niski hemoglobin może tłumaczyć zmęczenie, "
+            "wysoki cholesterol + niskie HRV = wyższe ryzyko. "
+            "Zakończ 2-3 konkretnymi zaleceniami dla Franka. "
+            "Po polsku, strukturalnie. Nie diagnozujesz — wskazujesz trendy i sugerujesz konsultację z lekarzem."
+        )
+        resp = _Groq(api_key=groq_key).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "Jesteś analitykiem zdrowia. Interpretujesz wyniki badań w kontekście danych biometrycznych. Nie diagnozyujesz."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=800, temperature=0.3,
+        )
+        return jsonify({"ok": True, "analysis": resp.choices[0].message.content.strip()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.post("/api/scan-image")
 def api_scan_image():
     """Groq vision: analizuje zdjęcie posiłku lub rozpiski treningowej."""

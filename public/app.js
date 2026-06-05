@@ -299,6 +299,36 @@ function renderToday(){
   </div>`);
   wrap.appendChild(rc);
 
+  // Osobiste strefy tętna (Karvonen)
+  if(d.hr_zones_personal) {
+    const z = d.hr_zones_personal;
+    const wazm = d.weighted_azm_today || 0;
+    wrap.appendChild(el(`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 style="margin:0">Twoje strefy tętna</h3>
+        <span style="font-size:11px;color:var(--txt2)">wg Karvonena · max ${z.max_hr} bpm</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:7px">
+        ${[
+          ["Z2 Spalanie tłuszczu","#4CAF7D",z.z2,"1 pkt/min"],
+          ["Z3 Cardio","#FF8C42",z.z3,"2 pkt/min ⭐"],
+          ["Z4 Szczyt","#FF5252",z.z4,"2 pkt/min ⭐"],
+        ].map(([name,col,[lo,hi],pts])=>`
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:10px;height:10px;border-radius:50%;background:${col};flex:none"></div>
+            <div style="flex:1;font-size:13px">${name}</div>
+            <div style="font-size:12px;color:var(--txt2)">${lo}–${hi} bpm</div>
+            <div style="font-size:11px;color:${col};font-weight:700;white-space:nowrap">${pts}</div>
+          </div>`).join("")}
+      </div>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:13px">
+        <span style="color:var(--txt2)">AZM ważone dziś</span>
+        <span style="font-weight:800;color:var(--activity)">${wazm} pkt</span>
+      </div>
+      <div style="font-size:11px;color:var(--txt2);margin-top:4px">Minuty w Cardio i Szczyt liczą się podwójnie</div>
+    </div>`));
+  }
+
   // Metric Tiles
   const hist=d.history||[];
   const tileData=[
@@ -938,6 +968,19 @@ async function renderProfile(){
   MOODS.forEach((em,i)=>{const btn=el(`<button class="mood-btn ${selMood===i+1?"active":""}">${em}</button>`);btn.addEventListener("click",()=>{selMood=i+1;(moodPick||mRow.querySelector("#moodPick")).querySelectorAll(".mood-btn").forEach((b,j)=>b.classList.toggle("active",j===i));});mRow.querySelector("#moodPick").appendChild(btn);});
   jCard.appendChild(mRow);
   jCard.appendChild(el(`<div class="row"><div class="k">💧 Woda</div><div class="num-input"><input type="number" id="jWater" min="0" max="20" value="${jt.water_glasses||""}" style="width:60px"/><span>szklanek</span></div></div>`));
+  // Skaner kodów kreskowych + food log
+  const foodCard = el(`<div style="padding:12px 0;border-bottom:1px solid var(--border)">
+    <div class="k" style="margin-bottom:8px">🍽️ Skanuj produkt</div>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn ghost" style="flex:1;padding:10px;font-size:13px" id="barcodeBtn">📷 Skanuj kod kreskowy</button>
+      <button class="btn ghost" style="flex:1;padding:10px;font-size:13px" id="foodPhotoBtn">🍕 Sfotografuj posiłek</button>
+    </div>
+    <div id="foodResult" style="font-size:13px;color:var(--txt2);display:none"></div>
+    <input type="file" id="barcodeFile" accept="image/*" capture="environment" style="display:none"/>
+    <input type="file" id="foodPhotoFile" accept="image/*" capture="environment" style="display:none"/>
+  </div>`);
+  jCard.appendChild(foodCard);
+
   jCard.appendChild(el(`<div style="padding:12px 0;border-bottom:1px solid var(--border)"><div class="k" style="margin-bottom:8px">🍽️ Kalorie i makra</div><div style="display:flex;flex-wrap:wrap;gap:8px">
     <div class="num-input"><input type="number" id="jCal" placeholder="kcal" value="${jt.calories_eaten||""}" style="width:80px"/><span>kcal</span></div>
     <div class="num-input"><input type="number" id="jProt" placeholder="białko" value="${jt.protein_g||""}" style="width:65px"/><span>g B</span></div>
@@ -976,6 +1019,11 @@ async function renderProfile(){
   // Install
   wrap.appendChild(el(`<div class="card"><h3>Zainstaluj na iPhone</h3><ol class="install-steps"><li>Otwórz w <strong>Safari</strong>.</li><li>Dotknij <strong>Udostępnij</strong> (kwadrat ze strzałką).</li><li>Wybierz <strong>„Do ekranu początkowego"</strong>.</li><li>Otwórz z ikony — wtedy działają push.</li></ol></div>`));
 
+  // Przycisk analizy badań krwi
+  const bloodBtn=el(`<button class="btn ghost" style="margin-top:10px">🩸 Analizuj wyniki badań krwi (PDF)</button>`);
+  bloodBtn.addEventListener("click",openBloodTestUpload);
+  wrap.appendChild(bloodBtn);
+
   const exp=el(`<button class="btn ghost">⬇ Pobierz dane (JSON)</button>`);
   exp.addEventListener("click",async()=>{const d=await api("/api/export");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:"application/json"}));a.download="bioaipulse.json";a.click();});
   wrap.appendChild(exp);
@@ -983,6 +1031,49 @@ async function renderProfile(){
   wrap.appendChild(el(`<div class="muted" style="text-align:center;margin-top:16px;font-size:11px">BioAI-Pulse · dane chronione · nie jest urządzeniem medycznym</div>`));
 
   setTimeout(async()=>{
+    // Skaner kodów kreskowych — używa ZXing JS (dynamicznie)
+    const barcodeBtn = document.querySelector("#barcodeBtn");
+    const barcodeFile = document.querySelector("#barcodeFile");
+    const foodPhotoBtn = document.querySelector("#foodPhotoBtn");
+    const foodPhotoFile = document.querySelector("#foodPhotoFile");
+    const foodResult = document.querySelector("#foodResult");
+
+    if(barcodeBtn) barcodeBtn.addEventListener("click", ()=>barcodeFile?.click());
+    if(foodPhotoBtn) foodPhotoBtn.addEventListener("click", ()=>foodPhotoFile?.click());
+
+    barcodeFile?.addEventListener("change", async(e)=>{
+      const file=e.target.files?.[0]; if(!file) return;
+      barcodeBtn.textContent="Rozpoznaję…"; barcodeBtn.disabled=true;
+      // Użyj QuaggaJS lub prostego API rozpoznawania — tu używamy Groq Vision do odczytu kodu
+      const reader=new FileReader();
+      reader.onload=async(ev)=>{
+        const b64=ev.target.result.split(",")[1];
+        // Najpierw próbuj Groq Vision do odczytania kodu kreskowego
+        const vRes=await api("/api/food/analyze-image",{method:"POST",body:JSON.stringify({image_b64:b64,mime_type:file.type})}).catch(()=>null);
+        barcodeBtn.textContent="📷 Skanuj kod kreskowy"; barcodeBtn.disabled=false;
+        if(vRes?.ok){
+          showFoodResult(foodResult, vRes, jCard);
+        } else {
+          toast("Nie udało się odczytać kodu — spróbuj zdjęcie posiłku.");
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+
+    foodPhotoFile?.addEventListener("change", async(e)=>{
+      const file=e.target.files?.[0]; if(!file) return;
+      foodPhotoBtn.textContent="Analizuję…"; foodPhotoBtn.disabled=true;
+      const reader=new FileReader();
+      reader.onload=async(ev)=>{
+        const b64=ev.target.result.split(",")[1];
+        const res=await api("/api/food/analyze-image",{method:"POST",body:JSON.stringify({image_b64:b64,mime_type:file.type})}).catch(()=>null);
+        foodPhotoBtn.textContent="🍕 Sfotografuj posiłek"; foodPhotoBtn.disabled=false;
+        if(res?.ok) showFoodResult(foodResult, res, jCard);
+        else toast("Nie udało się przeanalizować zdjęcia.");
+      };
+      reader.readAsDataURL(file);
+    });
+
     const remData=await api("/api/reminders").catch(()=>({items:[]}));
     State.reminders=remData.items||[];
     const list=$("#remList"); if(!list) return;
@@ -996,6 +1087,73 @@ async function renderProfile(){
     $("#pushBtn")?.addEventListener("click",enablePush);
   },30);
   return wrap;
+}
+
+/* FOOD RESULT — pokazuje wynik skanowania i wstawia do pól makr */
+function showFoodResult(container, data, jCard) {
+  if(!container) return;
+  container.style.display="block";
+  const cal=data.calories||data.per_100g?.calories||0;
+  const prot=data.protein||data.per_100g?.protein||0;
+  const carbs=data.carbs||data.per_100g?.carbs||0;
+  const fat=data.fat||data.per_100g?.fat||0;
+  container.innerHTML=`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:8px">
+    <div style="font-weight:700;font-size:14px;margin-bottom:6px">${esc(data.name||"Produkt")}</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:13px">
+      <span style="color:var(--activity)"><strong>${cal}</strong> kcal</span>
+      <span>B: <strong>${prot}g</strong></span>
+      <span>W: <strong>${carbs}g</strong></span>
+      <span>T: <strong>${fat}g</strong></span>
+      ${data.portion?`<span style="color:var(--txt2)">${data.portion}</span>`:""}
+    </div>
+    <button class="btn primary" style="margin-top:10px;padding:10px;font-size:13px" id="addFoodToJournal">Dodaj do dziennika</button>
+  </div>`;
+  container.querySelector("#addFoodToJournal")?.addEventListener("click",async()=>{
+    const calInput=jCard.querySelector("#jCal"), protInput=jCard.querySelector("#jProt");
+    const carbsInput=jCard.querySelector("#jCarbs"), fatInput=jCard.querySelector("#jFat");
+    if(calInput) calInput.value=Math.round((parseFloat(calInput.value)||0)+cal);
+    if(protInput) protInput.value=Math.round((parseFloat(protInput.value)||0)+prot);
+    if(carbsInput) carbsInput.value=Math.round((parseFloat(carbsInput.value)||0)+carbs);
+    if(fatInput) fatInput.value=Math.round((parseFloat(fatInput.value)||0)+fat);
+    container.style.display="none";
+    toast(`Dodano ${data.name||"produkt"} do dziennika`);
+  });
+}
+
+/* PDF BADAŃ — analiza wyników krwi */
+function openBloodTestUpload() {
+  const ov=el(`<div class="cam-overlay">
+    <h3>🩸 Wyniki badań krwi</h3>
+    <p>Wklej tekst z PDF wyników laboratoryjnych — AI porówna je z Twoimi danymi z opaski i wyjaśni co oznaczają.</p>
+    <textarea id="pdfText" placeholder="Wklej tutaj tekst skopiowany z PDF wyników krwi (morfologia, lipidogram, glukoza...)" style="width:100%;height:140px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px;color:var(--txt);font-size:13px;font-family:inherit;resize:none;outline:none"></textarea>
+    <button class="cam-label" id="analyzePdf">🔬 Analizuj wyniki</button>
+    <div class="cam-close" id="pdfClose">Anuluj</div>
+    <div id="pdfProgress" style="color:var(--txt2);font-size:13px;display:none">Groq analizuje wyniki…</div>
+  </div>`);
+  document.body.appendChild(ov);
+  ov.querySelector("#pdfClose").addEventListener("click",()=>ov.remove());
+  ov.querySelector("#analyzePdf").addEventListener("click",async()=>{
+    const text=ov.querySelector("#pdfText")?.value?.trim();
+    if(!text||text.length<50){ toast("Wklej więcej tekstu z wyników."); return; }
+    ov.querySelector("#analyzePdf").style.display="none";
+    ov.querySelector("#pdfProgress").style.display="block";
+    const res=await api("/api/health/analyze-pdf",{method:"POST",body:JSON.stringify({text})}).catch(()=>({ok:false}));
+    ov.remove();
+    if(res.ok&&res.analysis){
+      // Pokaż analizę w nowym modal
+      const modal=el(`<div class="player-overlay fade" style="justify-content:flex-end;padding:0">
+        <div style="background:var(--surface);border-radius:var(--r-lg) var(--r-lg) 0 0;padding:24px;width:100%;border-top:1px solid var(--border);max-height:85vh;overflow-y:auto">
+          <div style="width:40px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 20px"></div>
+          <h2 style="margin:0 0 16px;font-size:20px">🩸 Analiza wyników krwi</h2>
+          <div style="background:rgba(124,92,252,.08);border:1px solid rgba(124,92,252,.25);border-radius:14px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--txt2)">⚠️ To jest analiza informacyjna, nie diagnoza medyczna. Skonsultuj wyniki z lekarzem.</div>
+          <div style="font-size:14px;line-height:1.7;white-space:pre-wrap">${esc(res.analysis)}</div>
+          <button class="btn ghost" style="margin-top:20px" id="closePdfModal">Zamknij</button>
+        </div>
+      </div>`);
+      modal.querySelector("#closePdfModal").addEventListener("click",()=>modal.remove());
+      document.body.appendChild(modal);
+    } else toast("Błąd analizy: "+((res.error||"").slice(0,80)));
+  });
 }
 
 function urlB64ToUint8(base64){const pad="=".repeat((4-base64.length%4)%4),b64=(base64+pad).replace(/-/g,"+").replace(/_/g,"/"),raw=atob(b64);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}

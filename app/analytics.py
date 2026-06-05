@@ -505,6 +505,46 @@ def _personalized_load_target(history: list[dict]) -> int:
     return max(300, min(1200, target))  # między 300 a 1200
 
 
+def personal_hr_zones(rhr: float, age: int = 19) -> dict:
+    """
+    Osobiste strefy tętna wg Karvonena (Heart Rate Reserve).
+    Dokładniejsze niż stałe progi — bazują na Twoim RHR i wieku.
+    - Strefa 1 (Aktywna regeneracja): 50-60% HRR
+    - Strefa 2 (Aerobowa / spalanie tłuszczu): 60-70% HRR
+    - Strefa 3 (Aerobowo-anaerobowa / Cardio): 70-80% HRR
+    - Strefa 4 (Anaerobowa / Szczyt): 80-90% HRR
+    - Strefa 5 (Maksymalna): 90-100% HRR
+    """
+    max_hr = 220 - age
+    hrr = max_hr - rhr  # Heart Rate Reserve
+    return {
+        "max_hr": max_hr,
+        "rhr": rhr,
+        "hrr": hrr,
+        "z1": (round(rhr + hrr * 0.50), round(rhr + hrr * 0.60)),  # regeneracja
+        "z2": (round(rhr + hrr * 0.60), round(rhr + hrr * 0.70)),  # spalanie tłuszczu
+        "z3": (round(rhr + hrr * 0.70), round(rhr + hrr * 0.80)),  # cardio (2× AZM)
+        "z4": (round(rhr + hrr * 0.80), round(rhr + hrr * 0.90)),  # szczyt (2× AZM)
+        "z5": (round(rhr + hrr * 0.90), max_hr),                    # max
+        "fat_burn_threshold": round(rhr + hrr * 0.60),
+        "cardio_threshold":   round(rhr + hrr * 0.70),
+        "peak_threshold":     round(rhr + hrr * 0.80),
+    }
+
+
+def weighted_azm(entry: dict, rhr: float, age: int = 19) -> int:
+    """
+    AZM z podwójnymi punktami za cardio i szczyt (jak Fitbit Premium).
+    Strefa 2 (spalanie): 1 pkt/min
+    Strefy 3+4+5 (cardio/szczyt): 2 pkt/min
+    """
+    zones = entry.get("hr_zones_minutes") or {}
+    fat_burn = zones.get("fat_burn", 0)
+    cardio = zones.get("cardio", 0)
+    peak = zones.get("peak", 0)
+    return fat_burn + (cardio + peak) * 2
+
+
 def weekly_summary(history: list[dict]) -> dict:
     week = history[-7:]
     steps = [e.get("steps") or 0 for e in week]
@@ -570,6 +610,11 @@ def analyze(history, goal="maintain", custom_goals: dict = None, journal: list =
         mood_history = [{"date": j["date"], "mood": j.get("mood"), "note": j.get("mood_note", "")}
                         for j in journal[-14:] if j.get("mood")]
 
+    # Osobiste strefy tętna (Karvonen, wiek domyślnie 19 lat)
+    rhr_val = base.get("rhr") or 60.0
+    hr_zones_personal = personal_hr_zones(rhr_val)
+    weighted_azm_today = weighted_azm(today, rhr_val)
+
     return {
         "empty": False,
         "today": today,
@@ -588,4 +633,6 @@ def analyze(history, goal="maintain", custom_goals: dict = None, journal: list =
         "goal": goal,
         "goals_catalog": catalog,
         "history": history,
+        "hr_zones_personal": hr_zones_personal,
+        "weighted_azm_today": weighted_azm_today,
     }
