@@ -376,13 +376,27 @@ function renderTrends() {
 
 /* WORKOUTS */
 const WK_EMOJI = {Bieg:"🏃",Rower:"🚴",Spacer:"🚶",Siłownia:"🏋️"};
-function renderWorkouts() {
+async function renderWorkouts() {
   const d=State.data, wrap=el(`<div></div>`);
-  wrap.appendChild(el(`<div class="head"><div><h2>Treningi</h2><div class="date">Ostatnie 14 dni</div></div></div>`));
+  wrap.appendChild(el(`<div class="head"><div><h2>Treningi</h2><div class="date">Ostatnie 14 dni</div></div>
+    <button class="goal-chip" id="newWkt">+ Stwórz</button></div>`));
+
   const all=[];
-  d.history.slice(-14).forEach(e=>(e.workouts||[]).forEach(w=>all.push(w)));
-  all.sort((a,b)=>new Date(b.start)-new Date(a.start));
-  if (!all.length) { wrap.appendChild(el(`<div class="card"><div class="sub" style="text-align:center;padding:20px 0">Brak treningów w tym okresie.</div></div>`)); return wrap; }
+  // Treningi z opaski
+  d.history.slice(-14).forEach(e=>(e.workouts||[]).forEach(w=>all.push({...w, source:'opaska'})));
+  // Ręcznie zalogowane z dziennika
+  try {
+    const jData = await api('/api/journal');
+    (jData.journal||[]).forEach(j=>(j.manual_workouts||[]).forEach(w=>all.push({
+      ...w, start: w.completed_at||j.date, source:'manual', type: w.type||'Trening'
+    })));
+  } catch(_){}
+
+  all.sort((a,b)=>new Date(b.start||0)-new Date(a.start||0));
+
+  setTimeout(()=>{ document.querySelector('#newWkt')?.addEventListener('click',()=>openWorkoutGenerator(d)); }, 20);
+
+  if (!all.length) { wrap.appendChild(el(`<div class="card"><div class="sub" style="text-align:center;padding:20px 0">Brak treningów. Użyj "Stwórz" żeby wygenerować trening AI.</div></div>`)); return wrap; }
   all.forEach((w,idx)=>{
     const dist=w.distance_km?`${num(w.distance_km,2)} km`:"trening";
     const big=w.distance_km?`${num(w.distance_km,1)}`:`${w.duration_min}`;

@@ -107,14 +107,20 @@ def store_set(key: str, value):
     if KV_URL and KV_TOKEN:
         try:
             import requests as _r
-            # Upstash REST API pipeline: POST / with [["SET", key, json_value]]
+            # Upstash REST API: POST / with single command ["SET", key, value]
             serialized = json.dumps(value, ensure_ascii=False)
-            _r.post(f"{KV_URL}",
-                    headers={"Authorization": f"Bearer {KV_TOKEN}",
-                             "Content-Type": "application/json"},
-                    data=json.dumps([["SET", key, serialized]]), timeout=8)
-        except Exception:
-            pass
+            resp = _r.post(
+                f"{KV_URL}",
+                headers={"Authorization": f"Bearer {KV_TOKEN}",
+                         "Content-Type": "application/json"},
+                json=["SET", key, serialized],
+                timeout=8,
+            )
+            # Log response for debugging (visible in Vercel logs)
+            if not resp.ok:
+                print(f"[KV] store_set error {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            print(f"[KV] store_set exception: {e}")
         return
     d = _local_read()
     d[key] = value
@@ -714,6 +720,28 @@ def goals_check():
 @app.get("/api/ping")
 def ping():
     return jsonify({"ok": True})
+
+
+@app.get("/api/status")
+def status():
+    """Endpoint diagnostyczny — sprawdza co działa."""
+    checks = {}
+    # KV
+    test_val = "pulse_status_test"
+    store_set("_status_check", test_val)
+    got = store_get("_status_check")
+    checks["kv"] = got == test_val
+    checks["kv_url_set"] = bool(KV_URL)
+    checks["kv_token_set"] = bool(KV_TOKEN)
+    # Groq
+    checks["groq_key_set"] = bool(os.getenv("GROQ_API_KEY"))
+    # VAPID
+    checks["vapid_set"] = bool(VAPID_PUBLIC and VAPID_PRIVATE)
+    # Data
+    history, is_demo = load_history()
+    checks["data_ok"] = len(history) > 0
+    checks["is_demo"] = is_demo
+    return jsonify(checks)
 
 
 # ---------------------------------------------------------------------------
