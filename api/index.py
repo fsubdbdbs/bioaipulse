@@ -85,11 +85,14 @@ def store_get(key: str, default=None):
     if KV_URL and KV_TOKEN:
         try:
             import requests as _r
+            # Upstash REST API: GET /get/{key}
             resp = _r.get(f"{KV_URL}/get/{key}",
                           headers={"Authorization": f"Bearer {KV_TOKEN}"}, timeout=8)
             if resp.ok:
                 val = resp.json().get("result")
-                return json.loads(val) if val else default
+                if val is None:
+                    return default
+                return json.loads(val) if isinstance(val, str) else val
         except Exception:
             pass
         return default
@@ -100,10 +103,12 @@ def store_set(key: str, value):
     if KV_URL and KV_TOKEN:
         try:
             import requests as _r
-            _r.post(f"{KV_URL}/set/{key}",
+            # Upstash REST API pipeline: POST / with [["SET", key, json_value]]
+            serialized = json.dumps(value, ensure_ascii=False)
+            _r.post(f"{KV_URL}",
                     headers={"Authorization": f"Bearer {KV_TOKEN}",
                              "Content-Type": "application/json"},
-                    data=json.dumps({"value": json.dumps(value)}), timeout=8)
+                    data=json.dumps([["SET", key, serialized]]), timeout=8)
         except Exception:
             pass
         return
