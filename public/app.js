@@ -67,6 +67,87 @@ async function loadData(){
   ]);
   const ch=await api("/api/goals/check").catch(()=>({checked:[]}));
   State.checkedGoals=ch.checked||[];
+
+  // Auto-detekcja nowych treningów z opaski (SmartTrack)
+  checkForNewWorkouts(State.data);
+}
+
+async function checkForNewWorkouts(data) {
+  const today = data?.today || {};
+  const workouts = today.workouts || [];
+  if (!workouts.length) return;
+
+  // Klucz: timestamp ostatnio przeanalizowanego treningu
+  const lastKey = "pulse_last_wkt_analyzed";
+  const lastAnalyzed = localStorage.getItem(lastKey) || "2000-01-01T00:00:00";
+
+  // Znajdź treningi NOWSZE niż ostatnio przeanalizowany
+  const newWkts = workouts.filter(w => w.start && w.start > lastAnalyzed);
+  if (!newWkts.length) return;
+
+  // Zapamiętaj że te treningi zostały przeanalizowane
+  const newest = newWkts.sort((a,b) => b.start.localeCompare(a.start))[0];
+  localStorage.setItem(lastKey, newest.start);
+
+  // Pobierz AI analizę
+  const b = data.baselines || {};
+  const r = data.readiness || {};
+  const t = data.today || {};
+  try {
+    const res = await api("/api/workout/analyze", {method:"POST", body:JSON.stringify({
+      workout: newest,
+      readiness: r.score,
+      rhr: t.resting_hr_bpm,
+      hrv: t.hrv_rmssd,
+      base_rhr: b.rhr,
+      base_hrv: b.hrv,
+    })});
+    if (res.ok && res.summary) {
+      // Pokaż po krótkim opóźnieniu (żeby app zdążył się wyrenderować)
+      setTimeout(() => showAutoWorkoutSummary(newest, res.summary), 800);
+    }
+  } catch(_) {}
+}
+
+function showAutoWorkoutSummary(workout, aiSummary) {
+  const wtype = workout.type || "Trening";
+  const dur = workout.duration_min || 0;
+  const dist = workout.distance_km;
+  const avgHr = workout.avg_hr;
+
+  const modal = el(`<div class="player-overlay fade" style="justify-content:flex-end;padding:0">
+    <div style="background:var(--surface);border-radius:var(--r-lg) var(--r-lg) 0 0;padding:24px;width:100%;border-top:1px solid var(--border);max-height:90vh;overflow-y:auto">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 20px"></div>
+
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div style="font-size:36px">${{Bieg:"🏃",Rower:"🚴",Spacer:"🚶",Siłownia:"🏋️",HIIT:"💥"}[wtype]||"🏅"}</div>
+        <div>
+          <div style="font-weight:800;font-size:18px">Opaska wykryła trening!</div>
+          <div style="color:var(--txt2);font-size:13px">${esc(wtype)} · ${dur} min${dist?` · ${num(dist,1)} km`:""}${avgHr?` · śr. ${avgHr} bpm`:""}</div>
+        </div>
+      </div>
+
+      <div style="background:linear-gradient(135deg,rgba(124,92,252,.12),rgba(38,198,218,.08));border:1px solid rgba(124,92,252,.3);border-radius:16px;padding:16px;margin-bottom:20px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font-size:16px">✨</span>
+          <span style="font-size:11px;font-weight:700;color:var(--sleep);text-transform:uppercase;letter-spacing:.5px">Analiza Pulse AI</span>
+        </div>
+        <div style="font-size:14px;line-height:1.6">${esc(aiSummary)}</div>
+      </div>
+
+      <div style="display:flex;gap:10px">
+        <button class="btn ghost" style="flex:1" id="wktClose">Zamknij</button>
+        <button class="btn primary" style="flex:1" id="wktToTreningi">Zobacz trening</button>
+      </div>
+    </div>
+  </div>`);
+
+  modal.querySelector("#wktClose").addEventListener("click", ()=>modal.remove());
+  modal.querySelector("#wktToTreningi").addEventListener("click", ()=>{
+    modal.remove();
+    switchTab("workouts");
+  });
+  document.body.appendChild(modal);
 }
 
 /* RING HELPERS */

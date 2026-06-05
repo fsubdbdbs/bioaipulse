@@ -739,6 +739,64 @@ def api_workout_generate():
         return jsonify({"error": str(e)}), 500
 
 
+@app.post("/api/workout/analyze")
+def api_workout_analyze():
+    """
+    Analizuje AI trening wykryty przez opaskę (SmartTrack).
+    Wywoływany automatycznie przez frontend gdy znajdzie nowy trening w danych.
+    """
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    workout = body.get("workout", {})
+    readiness_score = body.get("readiness", 70)
+    rhr = body.get("rhr")
+    hrv = body.get("hrv")
+    base_rhr = body.get("base_rhr")
+    base_hrv = body.get("base_hrv")
+
+    wtype = workout.get("type", "Trening")
+    dur = workout.get("duration_min", 0)
+    dist = workout.get("distance_km")
+    avg_hr = workout.get("avg_hr")
+    max_hr = workout.get("max_hr")
+    cal = workout.get("calories", 0)
+
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        return jsonify({"ok": False, "error": "Brak klucza AI"}), 400
+
+    try:
+        from groq import Groq as _Groq
+        hr_info = f"tętno śr. {avg_hr} bpm / max {max_hr} bpm" if avg_hr else ""
+        dist_info = f", dystans {dist} km" if dist else ""
+        rhr_vs = f", RHR dziś {rhr} bpm (norma {base_rhr})" if rhr and base_rhr else ""
+        hrv_vs = f", HRV {hrv} ms (norma {base_hrv})" if hrv and base_hrv else ""
+
+        prompt = (
+            f"Opaska Franka automatycznie wykryła trening: {wtype}, {dur} min{dist_info}, "
+            f"{hr_info}, ~{cal} kcal.\n"
+            f"Jego gotowość dziś: {readiness_score}/100{rhr_vs}{hrv_vs}.\n\n"
+            "Napisz krótkie podsumowanie (3-4 zdania):\n"
+            "1. Jak trening wypadł względem dzisiejszej gotowości?\n"
+            "2. Co mówią strefy tętna o intensywności?\n"
+            "3. Ile czasu potrzebuje na regenerację i co jutro?\n"
+            "Po polsku, konkretnie, opieraj się na liczbach."
+        )
+        resp = _Groq(api_key=groq_key).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "Jesteś analitykiem sportowym. Krótko, konkretnie, po polsku."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=220, temperature=0.4,
+        )
+        summary = resp.choices[0].message.content.strip()
+        return jsonify({"ok": True, "summary": summary})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.post("/api/workout/log")
 def api_workout_log():
     if not require_auth():
