@@ -34,7 +34,11 @@ from flask import Flask, request, jsonify, send_from_directory
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "app"))
+# Vercel: pliki projektu są dostępne z katalogu /var/task lub względem ROOT
+for _p in [ROOT / "app", Path("/var/task/app"), Path("app")]:
+    if _p.exists():
+        sys.path.insert(0, str(_p))
+        break
 import analytics  # noqa: E402
 
 load_dotenv(ROOT / ".env", override=True)
