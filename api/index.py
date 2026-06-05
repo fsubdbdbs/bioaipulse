@@ -751,15 +751,56 @@ def api_workout_log():
         entry = {"date": today_str}
         journal.append(entry)
     wkts = entry.get("manual_workouts", [])
-    wkts.append({"type": body.get("title","Trening"), "duration_min": body.get("duration_min",0),
-                  "rpe": body.get("rpe"), "calories": body.get("calories"),
-                  "completed_at": datetime.now(TZ).isoformat()})
+    wkt_record = {
+        "type": body.get("title", "Trening"),
+        "duration_min": body.get("duration_min", 0),
+        "rpe": body.get("rpe"),
+        "calories": body.get("calories"),
+        "completed_at": datetime.now(TZ).isoformat()
+    }
+    wkts.append(wkt_record)
     entry["manual_workouts"] = wkts
     if body.get("rpe"):
         entry["rpe"] = body["rpe"]
     journal.sort(key=lambda e: e["date"])
     store_set("journal", journal)
-    return jsonify({"ok": True})
+
+    # Generuj AI podsumowanie treningu (Groq)
+    summary = None
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        try:
+            from groq import Groq as _Groq
+            history, _ = load_history()
+            today_data = history[-1] if history else {}
+            rhr = today_data.get("resting_hr_bpm", "?")
+            hrv = today_data.get("hrv_rmssd", "?")
+            readiness = (today_data.get("daily_readiness") or {}).get("score", "?")
+            rpe = body.get("rpe")
+            dur = body.get("duration_min", 0)
+            title = body.get("title", "Trening")
+            cal = body.get("calories", 0)
+
+            prompt = (
+                f"Franek właśnie ukończył trening: {title}, {dur} min, {cal} kcal"
+                f"{f', RPE {rpe}/10' if rpe else ''}.\n"
+                f"Jego dane dziś: Readiness {readiness}/100, RHR {rhr} bpm, HRV {hrv} ms.\n"
+                "Wygeneruj krótkie podsumowanie po treningu (3-4 zdania): oceń intensywność względem gotowości, "
+                "oszacuj czas regeneracji, daj 1 konkretną radę na jutro. Po polsku, konkretnie."
+            )
+            resp = _Groq(api_key=groq_key).chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": "Jesteś coachem sportowym. Odpowiadasz po polsku, krótko i konkretnie."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=200, temperature=0.5,
+            )
+            summary = resp.choices[0].message.content.strip()
+        except Exception:
+            pass
+
+    return jsonify({"ok": True, "summary": summary})
 
 
 @app.route("/api/goals/check", methods=["GET", "POST"])

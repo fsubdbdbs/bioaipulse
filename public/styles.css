@@ -330,11 +330,18 @@ body {
 .res-bar-row .rb > i { display: block; height: 100%; border-radius: 6px; }
 .res-bar-row .rb-v { width: 28px; text-align: right; font-weight: 700; font-size: 12px; }
 
-/* ========== WEEKLY ========== */
+/* ========== WEEKLY / STATS ========== */
 .week-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.week-stat { background: var(--surface2); border-radius: 14px; padding: 12px; }
-.week-stat .wv { font-size: 24px; font-weight: 800; }
-.week-stat .wl { font-size: 11px; color: var(--txt2); }
+.week-stat { background: var(--surface3); border-radius: 14px; padding: 14px 13px; border: 1px solid var(--border); }
+.week-stat .wv { font-size: 26px; font-weight: 900; }
+.week-stat .wl { font-size: 11px; color: var(--txt2); margin-top: 2px; }
+
+/* Stats period — horizontal list with dividers, not blended cards */
+.stats-list { display: flex; flex-direction: column; }
+.stat-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.stat-row:last-child { border-bottom: none; }
+.stat-row .sr-label { font-size: 13px; color: var(--txt2); }
+.stat-row .sr-val { font-size: 22px; font-weight: 800; }
 .load-bar { margin-top: 12px; }
 .load-bar .lb { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
 .load-bar .lbr { height: 7px; background: var(--surface3); border-radius: 7px; overflow: hidden; }

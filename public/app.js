@@ -397,16 +397,22 @@ function renderTrends(){
     mkChart("cMain",{type:"line",data:{labels,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:gc.color},ticks:{color:tc,maxTicksLimit:7,maxRotation:0}},y:{grid:{color:gc.color},ticks:{color:tc}}}}});
   },30);
 
-  // Summary stats
+  // Summary stats — jako lista z oddzielnikami, nie kafelki
   const clean=vals.filter(v=>v!=null);
-  if(clean.length){
+  if(clean.length>=2){
     const avg=clean.reduce((a,b)=>a+b,0)/clean.length;
-    wrap.appendChild(el(`<div class="card"><h3>Statystyki okresu</h3><div class="wk-grid">
-      <div class="week-stat"><div class="wv">${num(avg,1)}</div><div class="wl">średnia</div></div>
-      <div class="week-stat"><div class="wv">${num(Math.min(...clean),1)}</div><div class="wl">minimum</div></div>
-      <div class="week-stat"><div class="wv">${num(Math.max(...clean),1)}</div><div class="wl">maksimum</div></div>
-      <div class="week-stat"><div class="wv">${num(clean[clean.length-1],1)}</div><div class="wl">ostatni</div></div>
-    </div></div>`));
+    const mn=Math.min(...clean), mx=Math.max(...clean), last=clean[clean.length-1];
+    const trend=clean.length>=4?(last>avg*1.03?"📈 rosnący":last<avg*0.97?"📉 malejący":"➡️ stabilny"):"";
+    const col=ZONE[group.zone]||"#fff";
+    wrap.appendChild(el(`<div class="card"><h3>Statystyki — ${curMet.label}</h3>
+      <div class="stats-list">
+        <div class="stat-row"><span class="sr-label">Średnia</span><span class="sr-val" style="color:${col}">${num(avg,1)}</span></div>
+        <div class="stat-row"><span class="sr-label">Minimum</span><span class="sr-val">${num(mn,1)}</span></div>
+        <div class="stat-row"><span class="sr-label">Maksimum</span><span class="sr-val">${num(mx,1)}</span></div>
+        <div class="stat-row"><span class="sr-label">Ostatni</span><span class="sr-val">${num(last,1)}</span></div>
+        ${trend?`<div class="stat-row"><span class="sr-label">Trend</span><span style="font-size:14px;font-weight:700">${trend}</span></div>`:""}
+      </div>
+    </div>`));
   }
 
   // Weekly summary
@@ -529,6 +535,56 @@ function loadLeaflet(){
   return _leafletPromise;
 }
 
+/* POST-WORKOUT AI SUMMARY */
+function showWorkoutSummary(workout, rpe, aiSummary) {
+  const dur = workout.duration_min || 0;
+  const cal = Math.round(dur * 6.5);
+  const rpeColor = rpe >= 8 ? "var(--bad)" : rpe >= 6 ? "var(--activity)" : "var(--nutrition)";
+  const rpeLabel = rpe >= 9 ? "Maksymalny" : rpe >= 7 ? "Intensywny" : rpe >= 5 ? "Umiarkowany" : "Lekki";
+
+  const modal = el(`<div class="player-overlay fade" style="justify-content:center;padding:24px">
+    <div style="background:var(--surface);border-radius:var(--r-lg);padding:24px;width:100%;max-width:400px;border:1px solid var(--border)">
+      <div style="text-align:center;margin-bottom:20px">
+        <div style="font-size:48px;margin-bottom:8px">🏆</div>
+        <h2 style="margin:0;font-size:22px">Trening zakończony!</h2>
+        <div style="color:var(--txt2);font-size:14px;margin-top:4px">${esc(workout.title||"Trening")}</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:20px">
+        <div style="background:var(--surface2);border-radius:14px;padding:12px;text-align:center;border:1px solid var(--border)">
+          <div style="font-size:22px;font-weight:900;color:var(--activity)">${dur}</div>
+          <div style="font-size:11px;color:var(--txt2)">minut</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:14px;padding:12px;text-align:center;border:1px solid var(--border)">
+          <div style="font-size:22px;font-weight:900;color:var(--warn)">${cal}</div>
+          <div style="font-size:11px;color:var(--txt2)">kcal</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:14px;padding:12px;text-align:center;border:1px solid var(--border)">
+          <div style="font-size:22px;font-weight:900;color:${rpeColor}">${rpe||"—"}</div>
+          <div style="font-size:11px;color:var(--txt2)">RPE ${rpe?`(${rpeLabel})`:""}</div>
+        </div>
+      </div>
+
+      <div style="background:linear-gradient(135deg,rgba(124,92,252,.12),rgba(38,198,218,.08));border:1px solid rgba(124,92,252,.3);border-radius:16px;padding:16px;margin-bottom:20px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font-size:18px">✨</span>
+          <span style="font-size:12px;font-weight:700;color:var(--sleep);text-transform:uppercase;letter-spacing:.5px">Analiza AI — Pulse</span>
+        </div>
+        <div style="font-size:14px;line-height:1.6;color:var(--txt)">${esc(aiSummary)}</div>
+      </div>
+
+      <button class="btn primary" id="closeSummary">Gotowe</button>
+    </div>
+  </div>`);
+
+  modal.querySelector("#closeSummary").addEventListener("click", ()=>{
+    modal.remove();
+    // Odśwież dane i pokaż w Treningach
+    loadData().then(()=>{ switchTab("workouts"); });
+  });
+  document.body.appendChild(modal);
+}
+
 /* WORKOUT PLAYER */
 let _playerRpe=null;
 function openPlayer(workout){
@@ -559,9 +615,24 @@ function openPlayer(workout){
   }
   header.querySelector(".player-close").addEventListener("click",()=>overlay.remove());
   footer.querySelector("#saveWkt").addEventListener("click",async()=>{
-    await api("/api/workout/log",{method:"POST",body:JSON.stringify({title:workout.title,duration_min:workout.duration_min,rpe:_playerRpe,calories:Math.round((workout.duration_min||30)*6.5)})});
-    toast(`Trening zapisany!${_playerRpe?` RPE ${_playerRpe}/10`:""}`);
+    // Zmień przycisk na "Zapisuję..."
+    const saveBtn = footer.querySelector("#saveWkt");
+    saveBtn.textContent = "Zapisuję i analizuję…";
+    saveBtn.disabled = true;
+
+    const res = await api("/api/workout/log",{method:"POST",body:JSON.stringify({
+      title:workout.title, duration_min:workout.duration_min,
+      rpe:_playerRpe, calories:Math.round((workout.duration_min||30)*6.5)
+    })});
+
     overlay.remove();
+
+    // Pokaż AI podsumowanie po treningu
+    if(res.summary) {
+      showWorkoutSummary(workout, _playerRpe, res.summary);
+    } else {
+      toast(`Trening zapisany!${_playerRpe?` RPE ${_playerRpe}/10`:""}`);
+    }
   });
   overlay.appendChild(header);overlay.appendChild(body);overlay.appendChild(footer);
   document.body.appendChild(overlay);
