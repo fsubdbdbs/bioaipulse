@@ -445,10 +445,20 @@ function renderPlanBody(body,tabs){
   if (p.headline) body.appendChild(el(`<div class="plan-head">${p.headline}</div>`));
   const ul=el(`<ul class="plan"></ul>`); p.items.forEach(i=>ul.appendChild(el(`<li>${i}</li>`))); body.appendChild(ul);
 }
+function stripSetGoal(text) {
+  // Safety net: usuń blok <<SET_GOAL:...>> z wyświetlanego tekstu
+  return text.replace(/<<SET_GOAL:[\s\S]*?>>?/g, '').trim();
+}
 function paintChat() {
   const c=$("#chat"); if(!c) return; c.innerHTML="";
-  if (!State.chat.length) c.appendChild(el(`<div class="bubble ai">Cześć Franek! Jestem Pulse. Napisz na czym chcesz się skupić — np. „chcę biegać zamiast jeździć na rowerze" — a ustawię cel i dopasuję całą apkę.</div>`));
-  State.chat.forEach(m=>c.appendChild(el(`<div class="bubble ${m.role==="user"?"me":"ai"}">${esc(m.content)}</div>`)));
+  if (!State.chat.length) c.appendChild(el(`<div class="bubble ai">Cześć Franek! Napisz mi o czym marzysz — np. "chcę zacząć biegać" albo "jak mój dzisiejszy sen?"</div>`));
+  State.chat.forEach(m=>{
+    const isAI = m.role==="ai" || m.role==="assistant";
+    const txt = isAI ? stripSetGoal(m.content) : m.content;
+    const cls = m.role==="user" ? "me" : "ai";
+    const style = m.role==="error" ? ' style="opacity:.6"' : '';
+    if (txt) c.appendChild(el(`<div class="bubble ${cls}"${style}>${esc(txt)}</div>`));
+  });
   c.scrollTop=c.scrollHeight;
 }
 async function sendChat() {
@@ -456,11 +466,14 @@ async function sendChat() {
   inp.value=""; State.chat.push({role:"user",content:text}); paintChat();
   const c=$("#chat"); const typing=el(`<div class="typing">Pulse pisze…</div>`); c.appendChild(typing); c.scrollTop=c.scrollHeight;
   try {
-    const r=await api("/api/chat",{method:"POST",body:JSON.stringify({messages:State.chat,goal:State.goal})});
+    // Wyślij tylko prawdziwe wiadomości (bez komunikatów błędów frontendu)
+    const toSend = State.chat.filter(m=>m.role!=="error");
+    const r=await api("/api/chat",{method:"POST",body:JSON.stringify({messages:toSend,goal:State.goal})});
     typing.remove();
-    State.chat.push({role:"assistant",content:r.reply||"(brak odpowiedzi)"}); paintChat();
+    const reply = stripSetGoal(r.reply||"").trim() || "(brak odpowiedzi)";
+    State.chat.push({role:"ai",content:reply}); paintChat();
     if (r.set_goal && r.set_goal.goal) { await setGoal(r.set_goal.goal, true); }
-  } catch { typing.remove(); State.chat.push({role:"assistant",content:"Coś poszło nie tak. Spróbuj ponownie."}); paintChat(); }
+  } catch(e) { typing.remove(); State.chat.push({role:"error",content:"⚠️ Błąd połączenia — spróbuj ponownie."}); paintChat(); }
 }
 async function setGoal(id, fromChat=false) {
   State.goal=id; localStorage.setItem("pulse_goal",id);

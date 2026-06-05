@@ -310,8 +310,8 @@ def api_chat():
                 msgs.append({"role": m["role"], "content": content})
             resp = client.chat.completions.create(
                 model="llama-3.3-70b-versatile", messages=msgs,
-                max_tokens=400,   # krótsze odpowiedzi
-                temperature=0.6,
+                max_tokens=700,
+                temperature=0.5,
             )
             reply = resp.choices[0].message.content
         except Exception as e:  # noqa: BLE001
@@ -319,33 +319,47 @@ def api_chat():
     else:
         reply = "Brak klucza GROQ_API_KEY — dodaj go do .env."
 
-    # Wyciągnij SET_GOAL — JEDEN SLOT, zawsze nadpisuje
+    # Wyciągnij SET_GOAL — JEDEN SLOT, zawsze nadpisuje.
+    # Niezależnie od formatu: strip blok z odpowiedzi najpierw, potem parsuj.
     set_goal = None
-    m = re.search(r"<<SET_GOAL:(\{.*?\})>>", reply, re.S)
-    if m:
-        try:
-            payload = json.loads(m.group(1))
-            gid = payload.get("goal", "").strip().lower().replace(" ", "_").replace("-", "_")
-            if gid:
-                data = {
-                    "goal":               gid,
-                    "label":              payload.get("label", gid),
-                    "emoji":              payload.get("emoji", "🎯"),
-                    "custom":             True,
-                    "plan_hard":          payload.get("plan_hard", []),
-                    "plan_mid":           payload.get("plan_mid", []),
-                    "plan_easy":          payload.get("plan_easy", []),
-                    "plan_headline_hard": payload.get("plan_headline_hard", "Wysoka gotowość"),
-                    "plan_headline_mid":  payload.get("plan_headline_mid", "Umiarkowanie"),
-                    "plan_headline_easy": payload.get("plan_headline_easy", "Regeneracja"),
-                    "daily_task":         payload.get("daily_task", ""),
-                    "note":               payload.get("note", ""),
-                }
-                store_set("custom_goal", data)   # JEDEN SLOT — nadpisuje
-                set_goal = {"goal": gid, "label": data["label"], "emoji": data["emoji"]}
-        except (json.JSONDecodeError, KeyError):
-            pass
-        reply = reply[:m.start()].strip()
+    if "<<SET_GOAL:" in reply:
+        # Bezpieczny strip: usuń wszystko od <<SET_GOAL: do końca linii / >>
+        tag_start = reply.find("<<SET_GOAL:")
+        raw_tag = reply[tag_start:]
+        reply = reply[:tag_start].strip()
+        # Spróbuj wyciągnąć JSON — obsłuż warianty z }>>, }}>> itp.
+        m = re.search(r"<<SET_GOAL:(\{.+?\})\}*>>", raw_tag, re.S)
+        if m:
+            json_str = m.group(1)
+            # Dokończ JSON jeśli obcięty
+            try:
+                payload = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Spróbuj naprawić dodatkowe }
+                json_str = re.sub(r'\}+$', '}', json_str.rstrip())
+                try:
+                    payload = json.loads(json_str)
+                except json.JSONDecodeError:
+                    payload = None
+            if payload:
+                gid = payload.get("goal", "").strip().lower().replace(" ", "_").replace("-", "_")
+                if gid:
+                    data = {
+                        "goal":               gid,
+                        "label":              payload.get("label", gid),
+                        "emoji":              payload.get("emoji", "🎯"),
+                        "custom":             True,
+                        "plan_hard":          payload.get("plan_hard", []),
+                        "plan_mid":           payload.get("plan_mid", []),
+                        "plan_easy":          payload.get("plan_easy", []),
+                        "plan_headline_hard": payload.get("plan_headline_hard", "Wysoka gotowość"),
+                        "plan_headline_mid":  payload.get("plan_headline_mid", "Umiarkowanie"),
+                        "plan_headline_easy": payload.get("plan_headline_easy", "Regeneracja"),
+                        "daily_task":         payload.get("daily_task", ""),
+                        "note":               payload.get("note", ""),
+                    }
+                    store_set("custom_goal", data)
+                    set_goal = {"goal": gid, "label": data["label"], "emoji": data["emoji"]}
 
     return jsonify({"reply": reply, "set_goal": set_goal})
 
