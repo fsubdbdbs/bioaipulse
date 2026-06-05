@@ -94,11 +94,42 @@ function sparkline(vals, color, w=80, h=32){
   return `<svg viewBox="0 0 ${w} ${h}" style="width:${w}px;height:${h}px;display:block"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
-/* AI BANNER — krótki insight na podstawie danych */
-function aiBanner(d){
-  const r=d.readiness||{}, ins=d.insights||[], res=d.resilience||{}, today=d.today||{};
-  let text="", detail="";
+/* POGODA — Open-Meteo (darmowe, bez klucza, Gdynia) */
+let _weather = null;
+async function fetchWeather() {
+  if (_weather) return _weather;
+  try {
+    const url = "https://api.open-meteo.com/v1/forecast?latitude=54.52&longitude=18.53&current=temperature_2m,apparent_temperature,weathercode,wind_speed_10m&timezone=Europe%2FWarsaw&forecast_days=1";
+    const r = await fetch(url, {cache:"default"});
+    const d = await r.json();
+    const c = d.current || {};
+    const codes = {0:"☀️ Bezchmurnie",1:"🌤️ Słonecznie",2:"⛅ Częściowe zachmurzenie",3:"☁️ Zachmurzenie",45:"🌫️ Mgła",48:"🌫️ Mgła",51:"🌦️ Mżawka",61:"🌧️ Deszcz",71:"❄️ Śnieg",80:"🌧️ Przelotny deszcz",95:"⛈️ Burza"};
+    const wcode = c.weathercode || 0;
+    const desc = codes[wcode] || codes[Math.floor(wcode/10)*10] || "🌡️";
+    const temp = Math.round(c.temperature_2m || 0);
+    const feel = Math.round(c.apparent_temperature || temp);
+    const wind = Math.round(c.wind_speed_10m || 0);
+    _weather = { temp, feel, wind, desc, code: wcode };
+    return _weather;
+  } catch(_) { return null; }
+}
+
+function weatherAdvice(w, readiness) {
+  if (!w) return "";
+  const { temp, feel, wind, code } = w;
+  if (feel >= 32) return "🌡️ Upał — trenuj wcześnie rano lub w pomieszczeniu.";
+  if (feel <= -5) return "🥶 Mróz — rozgrzewaj się dłużej, skróć sesję.";
+  if (code >= 95) return "⛈️ Burza — zostań w domu, trening wewnętrzny.";
+  if (code >= 80 && wind > 30) return "🌧️ Deszcz i wiatr — lepiej trening w hali.";
+  if (feel >= 25 && readiness >= 70) return "☀️ Idealne warunki na trening na zewnątrz!";
+  return "";
+}
+
+/* AI BANNER — insight + pogoda */
+async function aiBannerAsync(d) {
+  const r=d.readiness||{}, ins=d.insights||{};
   const score=r.score||50;
+  let text="", detail="";
   if(ins.length){
     const warn=ins.find(i=>i.type==="warning");
     if(warn){text=warn.title;detail=warn.text.split(".")[0]+".";}
@@ -109,9 +140,25 @@ function aiBanner(d){
     else text=`Niska gotowość (<strong>${score}/100</strong>). Lepszy dzień na odpoczynek.`;
     detail=r.summary||"";
   }
-  const card=el(`<div class="ai-banner"><div class="ab-icon">✨</div><div style="flex:1"><div class="ab-text">${text}</div>${detail?`<div class="ab-cta">${detail}</div>`:""}
+
+  // Pobierz pogodę
+  const w = await fetchWeather();
+  const weatherTip = weatherAdvice(w, score);
+  const weatherLine = w ? `<div class="ab-weather">${w.desc} ${w.temp}°C (odczuwalnie ${w.feel}°C)</div>` : "";
+
+  const card=el(`<div class="ai-banner"><div class="ab-icon">✨</div><div style="flex:1">
+    <div class="ab-text">${text}</div>
+    ${weatherLine}
+    ${weatherTip ? `<div class="ab-cta" style="color:var(--warn)">${weatherTip}</div>` : detail ? `<div class="ab-cta">${detail}</div>` : ""}
   </div><span style="font-size:18px;color:var(--txt2)">›</span></div>`);
   card.addEventListener("click",()=>switchTab("coach"));
+  return card;
+}
+
+// Synchronous fallback dla renderToday (zastępujemy async wersją)
+function aiBanner(d) {
+  const card=el(`<div class="ai-banner"><div class="ab-icon">✨</div><div style="flex:1"><div class="ab-text">Ładuję analizę…</div></div></div>`);
+  aiBannerAsync(d).then(real=>{ if(card.parentNode) card.parentNode.replaceChild(real,card); });
   return card;
 }
 
@@ -331,13 +378,33 @@ function renderTrends(){
 
   // Weekly summary
   const w=d.weekly;
-  if(w) wrap.appendChild(el(`<div class="card"><h3>Tydzień — podsumowanie</h3><div class="week-grid">
-    <div class="week-stat"><div class="wv" style="color:var(--activity)">${num(w.total_steps)}</div><div class="wl">kroków łącznie</div></div>
-    <div class="week-stat"><div class="wv">${w.workouts_count}</div><div class="wl">treningów</div></div>
-    <div class="week-stat"><div class="wv">${num(w.total_azm)}</div><div class="wl">min AZM</div></div>
-    <div class="week-stat"><div class="wv">${w.avg_sleep_score||"—"}</div><div class="wl">śr. Sleep Score</div></div>
-  </div>
-  <div class="load-bar"><div class="lb"><span>Cardio Load</span><span class="muted">${w.total_cardio_load}/${w.cardio_load_target} pkt</span></div><div class="lbr"><i style="width:${w.cardio_load_pct}%"></i></div></div></div>`));
+  if(w){
+    const targetLabel = w.is_personalized_target ? "cel (Twój, adaptacyjny)" : "cel (domyślny, kalibracja 2 tyg.)";
+    const zones = w.hr_zones_week||{};
+    const zTotal=(zones.fat_burn||0)+(zones.cardio||0)+(zones.peak||0);
+    wrap.appendChild(el(`<div class="card"><h3>Tydzień — podsumowanie</h3><div class="week-grid">
+      <div class="week-stat"><div class="wv" style="color:var(--activity)">${num(w.total_steps)}</div><div class="wl">kroków łącznie</div></div>
+      <div class="week-stat"><div class="wv">${w.workouts_count}</div><div class="wl">treningów</div></div>
+      <div class="week-stat"><div class="wv">${num(w.total_azm)}</div><div class="wl">min AZM</div></div>
+      <div class="week-stat"><div class="wv">${w.avg_sleep_score||"—"}</div><div class="wl">śr. Sleep Score</div></div>
+    </div>
+    <div class="load-bar">
+      <div class="lb"><span>Cardio Load</span><span class="muted" style="font-size:11px">${w.total_cardio_load} / ${w.cardio_load_target} pkt · ${targetLabel}</span></div>
+      <div class="lbr"><i style="width:${w.cardio_load_pct}%"></i></div>
+    </div>
+    ${zTotal>0?`<div style="margin-top:12px"><div class="muted" style="font-size:11px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Strefy tętna — tydzień</div>
+    <div class="zone-chart-bar">
+      <div style="width:${(zones.fat_burn||0)/zTotal*100}%;background:var(--nutrition)"></div>
+      <div style="width:${(zones.cardio||0)/zTotal*100}%;background:var(--activity)"></div>
+      <div style="width:${(zones.peak||0)/zTotal*100}%;background:var(--bad)"></div>
+    </div>
+    <div class="zone-legend">
+      <span class="zl-item"><span class="zl-dot" style="background:var(--nutrition)"></span>Spalanie ${zones.fat_burn||0}min</span>
+      <span class="zl-item"><span class="zl-dot" style="background:var(--activity)"></span>Cardio ${zones.cardio||0}min</span>
+      <span class="zl-item"><span class="zl-dot" style="background:var(--bad)"></span>Szczyt ${zones.peak||0}min</span>
+    </div></div>`:""}
+    </div>`));
+  }
 
   return wrap;
 }
@@ -379,6 +446,32 @@ function showWorkoutDetail(w){
   if(w.route&&w.route.length>1) wrap.appendChild(el(`<div id="map"></div>`));
   const vt=(label,val,unit="")=>`<div class="vital"><div class="vt">${label}</div><div class="vv">${val||"—"}<small>${unit?" "+unit:""}</small></div></div>`;
   wrap.appendChild(el(`<div class="card"><h3>Szczegóły</h3><div class="wk-detail-grid">${vt("Czas",w.duration_min,"min")}${w.distance_km?vt("Dystans",num(w.distance_km,2),"km"):""}${w.pace_min_km?vt("Tempo",num(w.pace_min_km,2),"min/km"):""}${vt("Tętno śr.",w.avg_hr,"bpm")}${vt("Tętno max",w.max_hr,"bpm")}${vt("Kalorie",num(w.calories),"kcal")}${w.elevation_gain_m?vt("Wzniesienie",w.elevation_gain_m,"m"):""}</div></div>`));
+
+  // Wykres stref tętna po treningu
+  const zones = w.hr_zones_minutes || {};
+  const zTotal = (zones.fat_burn||0)+(zones.cardio||0)+(zones.peak||0);
+  if(zTotal > 0) {
+    const zCard = el(`<div class="card"><h3>Strefy tętna — szczegóły</h3>
+      <div class="zone-chart-bar">
+        <div style="width:${(zones.fat_burn||0)/zTotal*100}%;background:var(--nutrition)" title="Spalanie ${zones.fat_burn||0}min"></div>
+        <div style="width:${(zones.cardio||0)/zTotal*100}%;background:var(--activity)" title="Cardio ${zones.cardio||0}min"></div>
+        <div style="width:${(zones.peak||0)/zTotal*100}%;background:var(--bad)" title="Szczyt ${zones.peak||0}min"></div>
+      </div>
+      <div class="zone-legend">
+        <span class="zl-item"><span class="zl-dot" style="background:var(--nutrition)"></span>Spalanie <strong>${zones.fat_burn||0} min</strong></span>
+        <span class="zl-item"><span class="zl-dot" style="background:var(--activity)"></span>Cardio <strong>${zones.cardio||0} min</strong></span>
+        <span class="zl-item"><span class="zl-dot" style="background:var(--bad)"></span>Szczyt <strong>${zones.peak||0} min</strong></span>
+      </div>
+      <div class="card" style="margin-top:12px;padding:12px"><div style="font-size:12px;color:var(--txt2)"><strong>Spalanie tłuszczu:</strong> 65-75% max HR · <strong>Cardio:</strong> 76-85% · <strong>Szczyt:</strong> 86-95%</div></div>
+    </div>`);
+    // Mini donut chart z Chart.js
+    const chartWrap = el(`<div style="height:180px;margin:12px 0"><canvas id="zoneDonut"></canvas></div>`);
+    zCard.insertBefore(chartWrap, zCard.querySelector('.zone-chart-bar'));
+    wrap.appendChild(zCard);
+    setTimeout(()=>{
+      mkChart("zoneDonut",{type:"doughnut",data:{labels:["Spalanie","Cardio","Szczyt"],datasets:[{data:[zones.fat_burn||0,zones.cardio||0,zones.peak||0],backgroundColor:["#4CAF7D","#FF8C42","#FF5252"],borderWidth:0,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,cutout:"70%",plugins:{legend:{display:true,position:"bottom",labels:{color:"#909090",font:{size:12},padding:16}}}}});
+    },60);
+  }
   v.innerHTML=""; v.appendChild(wrap);
   $("#wkBack").addEventListener("click",()=>render());
   if(w.route&&w.route.length>1) loadLeaflet().then(()=>{
@@ -598,7 +691,8 @@ async function sendChat(){
   const c=$("#chat"); const typing=el(`<div class="typing">Pulse pisze…</div>`); c?.appendChild(typing); if(c) c.scrollTop=c.scrollHeight;
   try{
     const toSend=State.chat.filter(m=>m.role!=="error"&&m.role!=="__workout");
-    const r=await api("/api/chat",{method:"POST",body:JSON.stringify({messages:toSend,goal:State.goal})});
+    const wCtx = _weather ? `${_weather.desc} ${_weather.temp}°C, odczuwalnie ${_weather.feel}°C, wiatr ${_weather.wind} km/h` : "";
+    const r=await api("/api/chat",{method:"POST",body:JSON.stringify({messages:toSend,goal:State.goal,weather_ctx:wCtx})});
     typing?.remove();
     const reply=stripSetGoal(r.reply||"").trim()||"(brak odpowiedzi)";
     State.chat.push({role:"ai",content:reply});

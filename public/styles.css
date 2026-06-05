@@ -103,6 +103,7 @@ body {
 .ai-banner .ab-text { flex: 1; font-size: 14px; line-height: 1.5; }
 .ai-banner .ab-text strong { color: var(--sleep); }
 .ai-banner .ab-cta { color: var(--txt2); font-size: 12px; margin-top: 4px; }
+.ai-banner .ab-weather { font-size: 12px; color: var(--resilience); margin-top: 3px; font-weight: 600; }
 
 /* ========== CARDIO LOAD RING ========== */
 .cardio-ring-card { text-align: center; padding: 20px 16px 16px;
@@ -311,6 +312,11 @@ body {
 .wk .wstat .wlbl { font-size: 10px; color: var(--txt2); text-align: right; }
 #map { height: 200px; border-radius: 16px; overflow: hidden; margin-bottom: 12px; }
 .leaflet-container { background: var(--surface2); }
+.zone-chart-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; margin: 10px 0 8px; gap: 2px; }
+.zone-chart-bar > div { transition: width .6s var(--ease-out); border-radius: 999px; min-width: 2px; }
+.zone-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.zl-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.zl-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .wk-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .vital { background: var(--surface2); border-radius: 14px; padding: 12px; }
 .vital .vt { font-size: 11px; color: var(--txt2); }

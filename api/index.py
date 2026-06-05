@@ -348,6 +348,11 @@ def api_chat():
         f"sen {_avg(lambda e:(e.get('sleep') or {}).get('total_minutes'),30)} min"
     )
 
+    # Pogoda (opcjonalna — pobierana przez coach endpoint)
+    weather_ctx = body.get("weather_ctx", "")
+    if weather_ctx:
+        ctx += f"\nPogoda zewnętrzna: {weather_ctx}"
+
     groq_key = os.getenv("GROQ_API_KEY")
     if groq_key:
         try:

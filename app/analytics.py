@@ -480,6 +480,31 @@ def vo2max_estimate(entry: dict, base: dict) -> float | None:
 # Tygodniowe podsumowanie
 # ---------------------------------------------------------------------------
 
+def _personalized_load_target(history: list[dict]) -> int:
+    """
+    Adaptacyjny cel tygodniowy Cardio Load.
+    Uczy się z 4 tygodni historii i dodaje +5% progressive overload.
+    Minimum 7 dni danych — wcześniej zwraca domyślne 500.
+    """
+    if len(history) < 7:
+        return 500
+    # Zbierz tygodniowe sumy z ostatnich 4 tygodni
+    weekly_totals = []
+    for w in range(min(4, len(history) // 7)):
+        start = -(w + 1) * 7
+        end = -w * 7 if w > 0 else None
+        week_data = history[start:end]
+        total = sum(e.get("cardio_load") or 0 for e in week_data)
+        if total > 50:  # ignoruj tygodnie bez aktywności
+            weekly_totals.append(total)
+    if not weekly_totals:
+        return 500
+    # Średnia + 5% progressive overload, zaokrąglona do 50
+    avg = sum(weekly_totals) / len(weekly_totals)
+    target = round(avg * 1.05 / 50) * 50
+    return max(300, min(1200, target))  # między 300 a 1200
+
+
 def weekly_summary(history: list[dict]) -> dict:
     week = history[-7:]
     steps = [e.get("steps") or 0 for e in week]
@@ -487,7 +512,8 @@ def weekly_summary(history: list[dict]) -> dict:
     cardio_load = [e.get("cardio_load") or 0 for e in week]
     azm = [e.get("active_zone_minutes") or 0 for e in week]
     workouts = sum(len(e.get("workouts") or []) for e in week)
-    sleep_scores = [(e.get("sleep") or {}).get("sleep_score") for e in week if (e.get("sleep") or {}).get("sleep_score")]
+    sleep_scores = [(e.get("sleep") or {}).get("sleep_score")
+                    for e in week if (e.get("sleep") or {}).get("sleep_score")]
 
     total_steps = sum(steps)
     total_calories = round(sum(calories))
@@ -495,21 +521,30 @@ def weekly_summary(history: list[dict]) -> dict:
     total_azm = sum(azm)
     avg_steps = round(total_steps / len(week)) if week else 0
 
-    # Tygodniowy cel obciążenia kardio — adaptowany do gotowości
-    base_load_target = 500  # punkty Cardio Load
-    load_pct = round(total_load / base_load_target * 100) if base_load_target else 0
+    # Adaptacyjny cel — uczy się z historii
+    load_target = _personalized_load_target(history)
+    load_pct = round(total_load / load_target * 100) if load_target else 0
+
+    # HR zone breakdown dla tygodnia
+    zone_totals = {"fat_burn": 0, "cardio": 0, "peak": 0}
+    for e in week:
+        z = e.get("hr_zones_minutes") or {}
+        for k in zone_totals:
+            zone_totals[k] += z.get(k, 0)
 
     return {
         "total_steps": total_steps,
         "avg_steps": avg_steps,
         "total_calories": total_calories,
         "total_cardio_load": total_load,
-        "cardio_load_target": base_load_target,
+        "cardio_load_target": load_target,
         "cardio_load_pct": min(100, load_pct),
         "total_azm": total_azm,
         "workouts_count": workouts,
         "avg_sleep_score": round(mean(sleep_scores), 0) if sleep_scores else None,
         "days": len(week),
+        "hr_zones_week": zone_totals,
+        "is_personalized_target": len(history) >= 14,
     }
 
 
