@@ -124,34 +124,75 @@ body {
 .ring-stat .rsl { font-size: 11px; color: var(--txt2); }
 
 /* ========== METRIC TILES GRID ========== */
-.tiles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
-.tile { background: var(--surface); border-radius: var(--r);
-  padding: 14px 14px 10px; border: 1px solid var(--border);
-  position: relative; overflow: hidden; cursor: pointer;
-  transition: border-color .15s, transform .15s var(--ease-out); }
-.tile:active { transform: scale(.97); }
-.tile .t-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: .5px; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-.tile .t-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.tile .t-value { font-size: 30px; font-weight: 900; line-height: 1; }
-.tile .t-unit { font-size: 14px; font-weight: 500; color: var(--txt2); margin-left: 2px; }
-.tile .t-sub { font-size: 11px; color: var(--txt2); margin-top: 2px; }
-.tile .t-delta { font-size: 10.5px; padding: 2px 7px; border-radius: 999px; font-weight: 700; margin-left: 6px; }
-.delta-up { background: rgba(76,175,125,.2); color: var(--nutrition); }
-.delta-dn { background: rgba(255,82,82,.2); color: var(--bad); }
-.delta-flat { background: rgba(144,144,144,.14); color: var(--txt2); }
-/* Sparkline */
-.tile .sparkline { position: absolute; bottom: 0; right: 0; left: 0;
-  height: 40px; opacity: .5; }
-/* Zone coloring */
-.tile.sleep .t-dot { background: var(--sleep); }
-.tile.sleep .t-value { color: var(--sleep); }
-.tile.activity .t-dot { background: var(--activity); }
+.tiles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+
+.tile {
+  background: var(--surface);
+  border-radius: var(--r);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  transition: transform .14s var(--ease-out), border-color .14s;
+  min-height: 130px;
+}
+.tile:active { transform: scale(.96); }
+
+/* Zone border accent (left strip) */
+.tile.sleep   { border-left: 3px solid var(--sleep); }
+.tile.activity { border-left: 3px solid var(--activity); }
+.tile.resilience { border-left: 3px solid var(--resilience); }
+.tile.nutrition { border-left: 3px solid var(--nutrition); }
+
+.tile-body { padding: 12px 13px 8px; flex: 1; }
+
+.tile .t-label {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .6px; display: flex; align-items: center; gap: 5px;
+  color: var(--txt2); margin-bottom: 6px;
+}
+.tile .t-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.tile .t-value-row { display: flex; align-items: baseline; gap: 3px; }
+.tile .t-value { font-size: 32px; font-weight: 900; line-height: 1; }
+.tile .t-unit { font-size: 13px; font-weight: 500; color: var(--txt2); }
+.tile .t-sub { font-size: 11px; color: var(--txt2); margin-top: 3px; }
+.tile .t-delta { font-size: 10px; padding: 2px 6px; border-radius: 999px; font-weight: 700; margin-left: 5px; flex: none; }
+.delta-up   { background: rgba(76,175,125,.18); color: var(--nutrition); }
+.delta-dn   { background: rgba(255,82,82,.18); color: var(--bad); }
+.delta-flat { background: rgba(144,144,144,.12); color: var(--txt2); }
+
+/* Sparkline area — bottom of tile, full width */
+.t-spark-area {
+  height: 46px;
+  position: relative;
+  overflow: hidden;
+}
+.t-spark-area svg { display: block; width: 100%; height: 100%; }
+/* Gradient fade from zone color at bottom */
+.t-spark-area::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.tile.sleep .t-spark-area::after     { background: linear-gradient(to top, rgba(124,92,252,.15), transparent 70%); }
+.tile.activity .t-spark-area::after  { background: linear-gradient(to top, rgba(255,140,66,.15), transparent 70%); }
+.tile.resilience .t-spark-area::after{ background: linear-gradient(to top, rgba(38,198,218,.15), transparent 70%); }
+.tile.nutrition .t-spark-area::after { background: linear-gradient(to top, rgba(76,175,125,.15), transparent 70%); }
+
+/* Zone dot colors */
+.tile.sleep .t-dot      { background: var(--sleep); }
+.tile.sleep .t-value    { color: var(--sleep); }
+.tile.activity .t-dot   { background: var(--activity); }
 .tile.activity .t-value { color: var(--activity); }
 .tile.resilience .t-dot { background: var(--resilience); }
 .tile.resilience .t-value { color: var(--resilience); }
-.tile.nutrition .t-dot { background: var(--nutrition); }
-.tile.nutrition .t-value { color: var(--nutrition); }
+.tile.nutrition .t-dot  { background: var(--nutrition); }
+.tile.nutrition .t-value{ color: var(--nutrition); }
+
+/* Click hint */
+.tile .t-arrow { font-size: 12px; color: var(--txt3); margin-left: auto; }
 
 /* ========== INSIGHT CARDS ========== */
 .insight { display: flex; gap: 12px; padding: 13px; border-radius: var(--r-sm);

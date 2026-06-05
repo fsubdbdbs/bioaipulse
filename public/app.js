@@ -80,18 +80,42 @@ function deltaB(val,base,inv=false,unit=""){
   return `<span class="t-delta ${cls}">${s}${num(d,1)}${unit}</span>`;
 }
 
-/* SPARKLINE helper (SVG, last 7 points) */
-function sparkline(vals, color, w=80, h=32){
+/* SPARKLINE — full-width SVG with area fill */
+function sparkline(vals, color) {
   if(!vals||vals.length<2) return "";
-  const clean=vals.filter(v=>v!=null);
+  const clean = vals.filter(v=>v!=null);
   if(clean.length<2) return "";
+  const W=200, H=46, pad=3;
   const mn=Math.min(...clean), mx=Math.max(...clean), rng=mx-mn||1;
-  const pts=clean.map((v,i)=>{
-    const x=i/(clean.length-1)*w;
-    const y=h-((v-mn)/rng)*(h-4)-2;
-    return `${x},${y}`;
-  }).join(" ");
-  return `<svg viewBox="0 0 ${w} ${h}" style="width:${w}px;height:${h}px;display:block"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const pts = clean.map((v,i)=>({
+    x: i/(clean.length-1)*W,
+    y: H - pad - ((v-mn)/rng)*(H-pad*2),
+  }));
+  // Smooth path (Bezier)
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for(let i=1;i<pts.length;i++){
+    const prev=pts[i-1], cur=pts[i];
+    const cpx=(prev.x+cur.x)/2;
+    d += ` C ${cpx} ${prev.y} ${cpx} ${cur.y} ${cur.x} ${cur.y}`;
+  }
+  // Area fill
+  const areaD = `${d} L ${pts[pts.length-1].x} ${H} L ${pts[0].x} ${H} Z`;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <defs><linearGradient id="sg${color.replace('#','')}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${color}" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="${color}" stop-opacity="0.0"/>
+    </linearGradient></defs>
+    <path d="${areaD}" fill="url(#sg${color.replace('#','')})" stroke="none"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+/* Navigate to Trends and select a specific metric */
+function openMetricDetail(zone, metKey) {
+  State.trendMetric = zone;
+  State.selMet = metKey;
+  State.timePeriod = "M"; // Miesiąc — więcej kontekstu
+  switchTab("trends");
 }
 
 /* POGODA — Open-Meteo (darmowe, bez klucza, Gdynia) */
@@ -197,26 +221,35 @@ function renderToday(){
   // Metric Tiles
   const hist=d.history||[];
   const tileData=[
-    {zone:"sleep",label:"Sleep Score",val:s.sleep_score,unit:"/100",sub:`${hm(s.total_minutes)}`,spark:hist.map(e=>(e.sleep||{}).sleep_score),base:b.sleep_score},
-    {zone:"sleep",label:"Sen",val:s.total_minutes?Math.round(s.total_minutes/60*10)/10:null,unit:"h",sub:`${timeOf(s.sleep_start)} → ${timeOf(s.sleep_end)}`,spark:hist.map(e=>((e.sleep||{}).total_minutes||0)/60)},
-    {zone:"resilience",label:"HRV",val:t.hrv_rmssd,unit:"ms",sub:"zmienność tętna",spark:hist.map(e=>e.hrv_rmssd),base:b.hrv},
-    {zone:"resilience",label:"Tętno spocz.",val:t.resting_hr_bpm,unit:"bpm",sub:`norma ${num(b.rhr,0)}`,spark:hist.map(e=>e.resting_hr_bpm),base:b.rhr,invDelta:true},
-    {zone:"activity",label:"Dystans",val:t.distance_km,unit:"km",sub:`${t.active_minutes||0} min ruchu`,spark:hist.map(e=>e.distance_km)},
-    {zone:"resilience",label:"SpO2",val:t.spo2_pct,unit:"%",sub:"natlenienie",spark:hist.map(e=>e.spo2_pct),base:b.spo2},
-    {zone:"resilience",label:"Oddech",val:t.respiration_rate,unit:"/min",sub:"nocny",spark:hist.map(e=>e.respiration_rate)},
-    {zone:"sleep",label:"Temp. skóry",val:t.skin_temp_variation_c!=null?(t.skin_temp_variation_c>=0?"+":"")+num(t.skin_temp_variation_c,1):null,unit:"°C",sub:"vs norma",spark:hist.map(e=>e.skin_temp_variation_c)},
+    {zone:"sleep",    metKey:"score",    label:"Sleep Score", val:s.sleep_score,           unit:"/100",  sub:hm(s.total_minutes),               spark:hist.map(e=>(e.sleep||{}).sleep_score),  base:b.sleep_score},
+    {zone:"sleep",    metKey:"duration", label:"Sen",         val:s.total_minutes?+(s.total_minutes/60).toFixed(1):null, unit:"h", sub:`${timeOf(s.sleep_start)} → ${timeOf(s.sleep_end)}`, spark:hist.map(e=>+(((e.sleep||{}).total_minutes||0)/60).toFixed(1))},
+    {zone:"resilience",metKey:"hrv",    label:"HRV",         val:t.hrv_rmssd,             unit:"ms",    sub:"zmienność tętna",                  spark:hist.map(e=>e.hrv_rmssd),               base:b.hrv},
+    {zone:"resilience",metKey:"rhr",    label:"Tętno spocz.",val:t.resting_hr_bpm,         unit:"bpm",   sub:`norma ${num(b.rhr,0)}`,            spark:hist.map(e=>e.resting_hr_bpm),          base:b.rhr,inv:true},
+    {zone:"activity",  metKey:"steps",  label:"Kroki",       val:t.steps,                  unit:"",      sub:`${num(t.active_zone_minutes)} AZM`, spark:hist.map(e=>e.steps),                   base:b.steps},
+    {zone:"resilience",metKey:"spo2",   label:"SpO2",        val:t.spo2_pct,               unit:"%",     sub:"natlenienie krwi",                 spark:hist.map(e=>e.spo2_pct),                base:b.spo2},
+    {zone:"resilience",metKey:"resp",   label:"Oddech",      val:t.respiration_rate,       unit:"/min",  sub:"nocna częstotliwość",              spark:hist.map(e=>e.respiration_rate)},
+    {zone:"sleep",     metKey:"score",  label:"Temp. skóry", val:t.skin_temp_variation_c!=null?(t.skin_temp_variation_c>=0?"+":"")+num(t.skin_temp_variation_c,1):null, unit:"°C", sub:"odchylenie od normy", spark:hist.map(e=>e.skin_temp_variation_c)},
   ];
   const grid=el(`<div class="tiles-grid"></div>`);
   tileData.forEach(tile=>{
-    const spark7=tile.spark?tile.spark.slice(-7):[];
     const col=ZONE[tile.zone];
-    const delt=tile.base!=null?deltaB(tile.val,tile.base,tile.invDelta):"";
+    const delt=tile.base!=null?deltaB(tile.val,tile.base,tile.inv):"";
+    const valStr=tile.val!=null?String(tile.val):"—";
+    const spark14=(tile.spark||[]).slice(-14);
     const td=el(`<div class="tile ${tile.zone}">
-      <div class="t-label"><span class="t-dot"></span>${tile.label}${delt}</div>
-      <div><span class="t-value">${tile.val!=null?String(tile.val):"—"}</span><span class="t-unit">${tile.unit}</span></div>
-      <div class="t-sub">${tile.sub}</div>
-      <div class="sparkline">${sparkline(spark7,col)}</div>
+      <div class="tile-body">
+        <div class="t-label">
+          <span class="t-dot"></span>${tile.label}${delt}
+          <span class="t-arrow">›</span>
+        </div>
+        <div class="t-value-row">
+          <span class="t-value">${valStr}</span><span class="t-unit">${tile.unit}</span>
+        </div>
+        <div class="t-sub">${tile.sub}</div>
+      </div>
+      <div class="t-spark-area">${sparkline(spark14,col)}</div>
     </div>`);
+    td.addEventListener("click",()=>openMetricDetail(tile.zone, tile.metKey));
     grid.appendChild(td);
   });
   wrap.appendChild(grid);
