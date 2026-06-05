@@ -207,12 +207,11 @@ def api_data():
     if not history:
         return jsonify({"empty": True, "is_demo": is_demo})
 
-    # Jeden slot na cel użytkownika (nie lista)
     custom_goal = store_get("custom_goal", None)
     custom_goals = {custom_goal["goal"]: custom_goal} if custom_goal else {}
-    bundle = analytics.analyze(history, goal=goal, custom_goals=custom_goals)
+    journal = store_get("journal", [])
+    bundle = analytics.analyze(history, goal=goal, custom_goals=custom_goals, journal=journal)
     bundle["is_demo"] = is_demo
-    # Dodaj custom_goal do odpowiedzi żeby frontend mógł pokazać kafelek
     if custom_goal:
         bundle["custom_goal"] = custom_goal
     return jsonify(bundle)
@@ -277,24 +276,49 @@ def api_chat():
     base = bundle.get("baselines", {})
 
     def _avg(getter, n=7):
-        vals = [getter(e) for e in history[-n:] if getter(e) is not None]
+        vals = [v for v in (getter(e) for e in history[-n:]) if v is not None]
         return round(sum(vals)/len(vals), 1) if vals else None
 
     goal_data = bundle.get("goals_catalog", {}).get(goal, {})
     goal_label = goal_data.get("label", goal)
     ins = "; ".join(i["title"] for i in bundle.get("insights", [])) or "brak"
+    res = bundle.get("resilience", {})
+    week = bundle.get("weekly", {})
+    eff = bundle.get("sleep_efficiency")
+    vo2 = bundle.get("vo2max")
+
+    # Dane z dziennika
+    journal = store_get("journal", [])
+    last_j = journal[-1] if journal else {}
+    mood_vals = [e.get("mood") for e in journal[-7:] if e.get("mood")]
+    avg_mood = round(sum(mood_vals)/len(mood_vals), 1) if mood_vals else None
+    last_weight = next((e["weight_kg"] for e in reversed(journal) if e.get("weight_kg")), None)
+
+    # Trend RHR 7 dni (opis)
+    rhrs7 = [e.get("resting_hr_bpm") for e in history[-7:] if e.get("resting_hr_bpm")]
+    rhr_trend = "stabilne" if not rhrs7 else ("rosnące" if rhrs7[-1] > rhrs7[0]+1 else "spadające" if rhrs7[-1] < rhrs7[0]-1 else "stabilne")
+    hrvs7 = [e.get("hrv_rmssd") for e in history[-7:] if e.get("hrv_rmssd")]
+    hrv_trend = "stabilne" if not hrvs7 else ("rosnące" if hrvs7[-1] > hrvs7[0]+2 else "spadające" if hrvs7[-1] < hrvs7[0]-2 else "stabilne")
+
     ctx = (
-        f"[DANE BIOMETRYCZNE — {datetime.now(TZ).strftime('%d.%m.%Y %H:%M')}]\n"
+        f"[DANE FRANKA — {datetime.now(TZ).strftime('%d.%m.%Y %H:%M')}]\n"
         f"Cel: {goal_label} | Readiness: {ready.get('score')}/100 ({ready.get('label')})\n"
-        f"Sleep Score: {sleep.get('sleep_score')}/100, sen: {round((sleep.get('total_minutes') or 0)/60,1)}h\n"
-        f"RHR: {today.get('resting_hr_bpm')} bpm (norma {base.get('rhr')}), "
-        f"HRV: {today.get('hrv_rmssd')} ms (norma {base.get('hrv')})\n"
+        f"Sleep Score: {sleep.get('sleep_score')}/100, sen: {round((sleep.get('total_minutes') or 0)/60,1)}h"
+        f"{f', wydajność snu: {eff}%' if eff else ''}\n"
+        f"RHR: {today.get('resting_hr_bpm')} bpm (norma {base.get('rhr')}, trend 7d: {rhr_trend})\n"
+        f"HRV: {today.get('hrv_rmssd')} ms (norma {base.get('hrv')}, trend 7d: {hrv_trend})\n"
         f"SpO2: {today.get('spo2_pct')}%, oddech: {today.get('respiration_rate')}/min, "
         f"temp.skóry: {today.get('skin_temp_variation_c')}°C, cardio load: {today.get('cardio_load')}\n"
         f"Kroki: {today.get('steps')}, AZM: {today.get('active_zone_minutes')} min, kcal: {today.get('calories_kcal')}\n"
-        f"Śr. 7 dni: sen {_avg(lambda e:(e.get('sleep') or {}).get('total_minutes'))} min, "
-        f"kroki {_avg(lambda e:e.get('steps'))}, HRV {_avg(lambda e:e.get('hrv_rmssd'))}\n"
-        f"Sygnały: {ins}"
+        f"Tydzień: {week.get('total_steps')} kroków, {week.get('workouts_count')} treningów, "
+        f"obciążenie {week.get('total_cardio_load')}/{week.get('cardio_load_target')} pkt\n"
+        f"Odporność (resilience): {res.get('label')} ({res.get('score')}/100)\n"
+        + (f"VO2Max szac.: {vo2} ml/kg/min\n" if vo2 else "")
+        + (f"Waga: {last_weight} kg\n" if last_weight else "")
+        + (f"Nastrój śr. 7 dni: {avg_mood}/5\n" if avg_mood else "")
+        + f"Sygnały: {ins}\n"
+        f"Śr. 30d: RHR {_avg(lambda e:e.get('resting_hr_bpm'),30)}, HRV {_avg(lambda e:e.get('hrv_rmssd'),30)}, "
+        f"sen {_avg(lambda e:(e.get('sleep') or {}).get('total_minutes'),30)} min"
     )
 
     groq_key = os.getenv("GROQ_API_KEY")
@@ -484,6 +508,118 @@ def cron_reminders():
 
     store_set("reminder_state", state)
     return jsonify({"ok": True, "sent": sent, "time": hm_now})
+
+
+# ---------------------------------------------------------------------------
+# Journal
+# ---------------------------------------------------------------------------
+
+@app.route("/api/journal", methods=["GET", "POST"])
+def api_journal():
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    today_str = datetime.now(TZ).strftime("%Y-%m-%d")
+    journal = store_get("journal", [])
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        date = data.get("date", today_str)
+        entry = next((e for e in journal if e["date"] == date), None)
+        if not entry:
+            entry = {"date": date}
+            journal.append(entry)
+        for field in ["weight_kg","body_fat_pct","mood","mood_note",
+                      "water_glasses","calories_eaten","protein_g","carbs_g","fat_g"]:
+            if field in data:
+                entry[field] = data[field]
+        if "manual_workout" in data:
+            wkts = entry.get("manual_workouts", [])
+            wkts.append(data["manual_workout"])
+            entry["manual_workouts"] = wkts
+        journal.sort(key=lambda e: e["date"])
+        journal = journal[-90:]
+        store_set("journal", journal)
+        return jsonify({"ok": True, "entry": entry})
+    last_entry = next((e for e in reversed(journal) if e["date"] == today_str), {})
+    return jsonify({"journal": journal[-30:], "today": last_entry})
+
+
+@app.get("/api/journal/summary")
+def api_journal_summary():
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    journal = store_get("journal", [])
+    last30 = journal[-30:]
+    weights = [(e["date"], e["weight_kg"]) for e in last30 if e.get("weight_kg")]
+    moods = [(e["date"], e["mood"]) for e in last30 if e.get("mood")]
+    return jsonify({
+        "weights": weights, "moods": moods,
+        "avg_mood": round(sum(m for _,m in moods)/len(moods), 1) if moods else None,
+        "latest_weight": weights[-1][1] if weights else None,
+        "bmi": round(weights[-1][1]/(1.78**2), 1) if weights else None,
+        "manual_workouts_count": sum(len(e.get("manual_workouts",[])) for e in last30),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Workout Generator + Log
+# ---------------------------------------------------------------------------
+
+WORKOUT_PROMPT = """Trener personalny. Wygeneruj trening jako JSON. Odpowiedz TYLKO czystym JSON.
+Format: {"title":"...","duration_min":45,"sections":[{"name":"Rozgrzewka","duration_min":8,"exercises":[{"name":"...","sets":2,"reps":"10","weight":"","rest_sec":30,"note":"..."}]},{"name":"Blok główny","duration_min":30,"exercises":[...]},{"name":"Schłodzenie","duration_min":7,"exercises":[...]}]}
+Minimum 3 sekcje, minimum 3 ćwiczenia każda. Wszystko po polsku. JSON musi być poprawny i kompletny."""
+
+
+@app.post("/api/workout/generate")
+def api_workout_generate():
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    readiness_score = body.get("readiness_score", 70)
+    intensity = "intensywny" if readiness_score>=75 else "umiarkowany" if readiness_score>=50 else "lekki"
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        return jsonify({"error": "Brak GROQ_API_KEY"}), 400
+    try:
+        from groq import Groq
+        client = Groq(api_key=groq_key)
+        prompt = (f"Trening: {body.get('type','ogólny')}, czas: {body.get('duration_min',45)} min, "
+                  f"sprzęt: {body.get('equipment','brak')}, skupienie: {body.get('focus','całe ciało')}, "
+                  f"poziom: {body.get('level','średni')}, intensywność: {intensity}.")
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role":"system","content":WORKOUT_PROMPT},{"role":"user","content":prompt}],
+            max_tokens=1400, temperature=0.3,
+        )
+        raw = resp.choices[0].message.content.strip()
+        m = re.search(r"\{[\s\S]+\}", raw)
+        if m:
+            return jsonify({"ok": True, "workout": json.loads(m.group())})
+        return jsonify({"error": "Niepoprawny JSON z AI"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/workout/log")
+def api_workout_log():
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    today_str = datetime.now(TZ).strftime("%Y-%m-%d")
+    journal = store_get("journal", [])
+    entry = next((e for e in journal if e["date"] == today_str), None)
+    if not entry:
+        entry = {"date": today_str}
+        journal.append(entry)
+    wkts = entry.get("manual_workouts", [])
+    wkts.append({"type": body.get("title","Trening"), "duration_min": body.get("duration_min",0),
+                  "rpe": body.get("rpe"), "calories": body.get("calories"),
+                  "completed_at": datetime.now(TZ).isoformat()})
+    entry["manual_workouts"] = wkts
+    if body.get("rpe"):
+        entry["rpe"] = body["rpe"]
+    journal.sort(key=lambda e: e["date"])
+    store_set("journal", journal)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/goals/check", methods=["GET", "POST"])

@@ -91,12 +91,15 @@ function vital(label, value, unit="", delta="") {
 }
 
 /* ROUTER */
-function render() {
+async function render() {
   const v = $("#view");
   Object.values(State.charts).forEach(c => c&&c.destroy()); State.charts = {};
   if (State.map) { State.map.remove(); State.map = null; }
   const map = { today:renderToday, trends:renderTrends, workouts:renderWorkouts, coach:renderCoach, profile:renderProfile };
-  v.innerHTML = ""; const node = map[State.tab](); node.classList.add("fade"); v.appendChild(node);
+  v.innerHTML = "";
+  const result = map[State.tab]();
+  const node = result instanceof Promise ? await result : result;
+  node.classList.add("fade"); v.appendChild(node);
 }
 
 function goalChip() {
@@ -118,7 +121,7 @@ const HERO_METRICS = {
   hrv:         {title:"HRV", tag:()=>"regeneracja", val:d=>d.today.hrv_rmssd, big:v=>num(v), sub:()=>"ms (RMSSD)", pct:(d,v)=>v/((d.baselines.hrv||60)*1.5)*100, color:()=>"#2dd4a7"},
   cardio_load: {title:"Obciążenie kardio", tag:()=>"trening", val:d=>d.today.cardio_load, big:v=>num(v), sub:()=>"Cardio Load", pct:(d,v)=>v/200*100, color:()=>"#f5a524"},
 };
-const DEFAULT_LAYOUT = ["hero","goals_today","coach_tip","activity","sleep","vitals","zones","hr247"];
+const DEFAULT_LAYOUT = ["hero","goals_today","weekly","coach_tip","activity","sleep","fitness","resilience","vitals","zones","hr247"];
 
 function wHero(d) {
   const m = HERO_METRICS[State.heroMetric] || HERO_METRICS.readiness;
@@ -220,13 +223,61 @@ function wWorkoutMini(d){ let last=null; d.history.slice(-7).forEach(e=>(e.worko
   const row=el(`<div class="wk" style="margin:0"><div class="we">${WK_EMOJI[last.type]||"🏅"}</div><div class="wmain"><div class="wtitle">${last.type}</div><div class="wsub">${fmtDate(last.start)} · ${last.duration_min} min · ${last.avg_hr} bpm</div></div><div class="wstat"><div class="wbig">${last.distance_km?num(last.distance_km,1):last.duration_min}</div><div class="wlbl">${last.distance_km?"km":"min"}</div></div></div>`);
   row.addEventListener("click",()=>showWorkout(last)); c.appendChild(row); return c; }
 
+/* ---- WIDGET: Resilience ---- */
+function wResilience(d) {
+  const r = d.resilience; if (!r || r.score == null) return null;
+  const col = r.score>=75?"#2dd4a7":r.score>=50?"#f5a524":"#f25f5c";
+  const c = r.components||{};
+  const card = el(`<div class="card"><h3>Odporność (Resilience)</h3>
+    <div class="resilience">
+      <div class="res-ring">${ringGeneric(r.score, col, 80, 9)}</div>
+      <div class="res-text"><div class="rl">${r.label}</div><div class="rd">${r.description||""}</div></div>
+    </div>
+    <div class="res-bars">
+      <div class="res-bar"><span class="rb-lbl">Trend HRV</span><span class="rb"><i style="width:${c.hrv_trend||0}%;background:var(--accent)"></i></span><span class="rb-val">${c.hrv_trend||0}</span></div>
+      <div class="res-bar"><span class="rb-lbl">Reg. snu</span><span class="rb"><i style="width:${c.sleep_regularity||0}%;background:var(--accent2)"></i></span><span class="rb-val">${c.sleep_regularity||0}</span></div>
+      <div class="res-bar"><span class="rb-lbl">Gotowość śr.</span><span class="rb"><i style="width:${c.readiness_avg||0}%;background:#a855f7"></i></span><span class="rb-val">${c.readiness_avg||0}</span></div>
+    </div>
+  </div>`); return card;
+}
+
+/* ---- WIDGET: Weekly Summary ---- */
+function wWeekly(d) {
+  const w = d.weekly; if (!w) return null;
+  return el(`<div class="card"><h3>Ten tydzień (${w.days} dni)</h3>
+    <div class="wk-grid">
+      <div class="wk-stat"><div class="wv">${num(w.total_steps)}</div><div class="wl">kroków łącznie</div></div>
+      <div class="wk-stat"><div class="wv">${w.workouts_count}</div><div class="wl">treningów</div></div>
+      <div class="wk-stat"><div class="wv">${num(w.total_azm)}</div><div class="wl">min strefy</div></div>
+      <div class="wk-stat"><div class="wv">${w.avg_sleep_score??'—'}</div><div class="wl">śr. Sleep Score</div></div>
+    </div>
+    <div class="load-bar">
+      <div class="lb"><span>Obciążenie kardio</span><span class="muted">${w.total_cardio_load}/${w.cardio_load_target} pkt</span></div>
+      <div class="lbr"><i style="width:${w.cardio_load_pct}%"></i></div>
+    </div>
+  </div>`);
+}
+
+/* ---- WIDGET: VO2Max + Sleep Efficiency ---- */
+function wFitness(d) {
+  const eff = d.sleep_efficiency, vo2 = d.vo2max;
+  if (!eff && !vo2) return null;
+  return el(`<div class="card"><h3>Kondycja</h3><div class="vitals">
+    ${eff ? vital("Wydajność snu", num(eff,1), "%", "") : ""}
+    ${vo2 ? vital("VO2 Max (szac.)", num(vo2,1), "ml/kg/min", "") : ""}
+  </div><div class="sub" style="margin-top:8px;font-size:12px">Wydajność snu = czas snu / czas w łóżku · VO2Max szacunkowy z tętna</div></div>`);
+}
+
 const WIDGETS = {
   hero:       {title:"Główny wskaźnik",  render:wHero},
   goals_today:{title:"Cele na dziś",     render:wGoalsToday},
+  weekly:     {title:"Tydzień",          render:wWeekly},
   coach_tip:  {title:"Porada coacha",    render:wCoachTip},
   activity:   {title:"Aktywność",        render:wActivity},
   sleep:      {title:"Sen",              render:wSleep},
   vitals:     {title:"Parametry",        render:wVitals},
+  fitness:    {title:"Kondycja",         render:wFitness},
+  resilience: {title:"Odporność",        render:wResilience},
   zones:      {title:"Strefy tętna",     render:wZones},
   hr247:      {title:"Tętno 24/7",       render:wHr247},
   insights:   {title:"Spostrzeżenia",    render:wInsights},
@@ -388,6 +439,85 @@ function loadLeaflet() {
   return _leafletPromise;
 }
 
+/* ---- WORKOUT PLAYER ---- */
+let _playerRpe = null;
+function openPlayer(workout) {
+  _playerRpe = null;
+  const overlay = el(`<div class="player-overlay fade"></div>`);
+  const header = el(`<div class="player-header"><h2>${esc(workout.title||"Trening")}<br><span style="font-size:13px;color:var(--muted);font-weight:400">${workout.duration_min} min</span></h2><button class="player-close">✕ Zakończ</button></div>`);
+  const body = el(`<div class="player-body"></div>`);
+  const footer = el(`<div class="player-footer"><div class="sub" style="margin-bottom:8px">Jak trudny był trening? (RPE 1–10)</div><div class="rpe-pick" id="rpePick"></div><button class="btn primary" id="saveWkt" style="margin-top:12px">Zapisz trening</button></div>`);
+
+  const doneSets = new Set();
+  let total = 0, doneCount = 0;
+
+  (workout.sections||[]).forEach(sec => {
+    body.appendChild(el(`<div class="section-title">${esc(sec.name)} · ${sec.duration_min} min</div>`));
+    (sec.exercises||[]).forEach((ex, ei) => {
+      total++;
+      const id = `${sec.name}-${ei}`;
+      const meta = [ex.sets&&`${ex.sets}×${ex.reps}`, ex.weight, ex.rest_sec&&`przerwa ${ex.rest_sec}s`].filter(Boolean).join(' · ');
+      const row = el(`<div class="ex-row" data-id="${id}"><div class="ex-check"></div><div class="ex-info"><div class="ex-name">${esc(ex.name)}</div><div class="ex-meta">${meta}</div>${ex.note?`<div class="ex-note">${esc(ex.note)}</div>`:''}</div></div>`);
+      row.addEventListener("click", () => {
+        if (doneSets.has(id)) { doneSets.delete(id); doneCount--; } else { doneSets.add(id); doneCount++; }
+        row.classList.toggle("done", doneSets.has(id));
+        row.querySelector(".ex-check").textContent = doneSets.has(id) ? "✓" : "";
+      });
+      body.appendChild(row);
+    });
+  });
+
+  for (let i=1; i<=10; i++) {
+    const btn = el(`<button>${i}</button>`);
+    btn.addEventListener("click", () => { _playerRpe=i; footer.querySelectorAll(".rpe-pick button").forEach(b=>b.classList.toggle("active",b.textContent==i)); });
+    footer.querySelector("#rpePick").appendChild(btn);
+  }
+
+  header.querySelector(".player-close").addEventListener("click", () => overlay.remove());
+  footer.querySelector("#saveWkt").addEventListener("click", async () => {
+    await api("/api/workout/log", {method:"POST", body:JSON.stringify({title:workout.title, duration_min:workout.duration_min, rpe:_playerRpe, calories: Math.round((workout.duration_min||30)*6.5)})});
+    toast(`Trening zapisany!${_playerRpe?` RPE ${_playerRpe}/10`:""}`);
+    overlay.remove();
+  });
+
+  overlay.appendChild(header); overlay.appendChild(body); overlay.appendChild(footer);
+  document.body.appendChild(overlay);
+}
+
+/* ---- WORKOUT GENERATOR ---- */
+async function openWorkoutGenerator(d) {
+  const ready = d.readiness?.score || 70;
+  const overlay = el(`<div class="player-overlay fade"></div>`);
+  const header = el(`<div class="player-header"><h2>Generator treningu</h2><button class="player-close">✕</button></div>`);
+  const body = el(`<div class="player-body"></div>`);
+  const form = el(`<div class="gen-form">
+    <select id="gType"><option value="siłowy">Siłowy</option><option value="cardio">Cardio</option><option value="HIIT">HIIT</option><option value="stretch">Rozciąganie / Joga</option><option value="mieszany">Mieszany</option></select>
+    <select id="gEquip"><option value="brak">Bez sprzętu</option><option value="hantle">Hantle</option><option value="sztanga,hantle">Sztanga + hantle</option><option value="maszyny siłowni">Maszyny siłowni</option><option value="gumy oporowe">Gumy oporowe</option></select>
+    <input id="gFocus" placeholder="Skupienie (np. klata i plecy, nogi, core)" value="całe ciało"/>
+    <select id="gDuration"><option value="20">20 min</option><option value="30">30 min</option><option value="45" selected>45 min</option><option value="60">60 min</option></select>
+    <select id="gLevel"><option value="lekki">Lekki</option><option value="średni" selected>Średni</option><option value="zaawansowany">Zaawansowany</option></select>
+    <button class="btn primary" id="genBtn">🤖 Wygeneruj trening AI</button>
+  </div>`);
+  body.appendChild(form);
+  header.querySelector(".player-close").addEventListener("click", ()=>overlay.remove());
+  form.querySelector("#genBtn").addEventListener("click", async () => {
+    form.innerHTML = `<div class="generating"><div class="spin">⚙️</div><div style="margin-top:12px">AI generuje trening…</div></div>`;
+    const res = await api("/api/workout/generate", {method:"POST", body:JSON.stringify({
+      type: overlay.querySelector("#gType")?.value || "mieszany",
+      equipment: overlay.querySelector("#gEquip")?.value || "brak",
+      focus: overlay.querySelector("#gFocus")?.value || "całe ciało",
+      duration_min: parseInt(overlay.querySelector("#gDuration")?.value||"45"),
+      level: overlay.querySelector("#gLevel")?.value || "średni",
+      readiness_score: ready,
+    })}).catch(()=>({error:"Błąd sieci"}));
+    overlay.remove();
+    if (res.ok && res.workout) openPlayer(res.workout);
+    else toast("Nie udało się wygenerować — spróbuj ponownie.");
+  });
+  overlay.appendChild(header); overlay.appendChild(body);
+  document.body.appendChild(overlay);
+}
+
 /* COACH */
 function renderCoach() {
   const d=State.data, wrap=el(`<div></div>`);
@@ -415,6 +545,14 @@ function renderCoach() {
   // Chat
   const chatCard=el(`<div class="card"><h3>Porozmawiaj z coachem</h3><div class="chat" id="chat"></div><div class="chat-input"><input id="chatIn" placeholder="np. chcę zacząć biegać…" /><button id="chatSend">↑</button></div></div>`);
   wrap.appendChild(chatCard);
+
+  // Generator treningu
+  const genCard = el(`<div class="card"><h3>Generator treningu AI</h3>
+    <div class="sub" style="margin-bottom:12px">AI wygeneruje pełny trening (rozgrzewka + blok + schłodzenie) dopasowany do Twojej dzisiejszej gotowości ${d.readiness?.score??'—'}/100.</div>
+    <button class="btn primary" id="openGen">⚙️ Stwórz trening dla mnie</button>
+  </div>`);
+  genCard.querySelector("#openGen").addEventListener("click", ()=>openWorkoutGenerator(d));
+  wrap.appendChild(genCard);
 
   // Insights
   if (d.insights && d.insights.length) {
@@ -484,7 +622,7 @@ async function setGoal(id, fromChat=false) {
 }
 
 /* PROFILE */
-function renderProfile() {
+async function renderProfile() {
   const d=State.data, b=d.baselines, wrap=el(`<div></div>`);
   wrap.appendChild(el(`<div class="head"><div><h2>Profil</h2><div class="date">Franek</div></div>${goalChip()}</div>`));
 
@@ -503,6 +641,47 @@ function renderProfile() {
     <div class="row"><span class="k">Średnie kroki</span><span class="v">${num(b.steps,0)}</span></div>
     <div class="row"><span class="k">Średni Sleep Score</span><span class="v">${num(b.sleep_score,0)}/100</span></div>
   </div>`));
+
+  // Journal
+  const jCard = el(`<div class="card"><h3>Dziennik dziś</h3></div>`);
+  const jData = await api("/api/journal").catch(()=>({today:{},journal:[]}));
+  const jt = jData.today || {};
+  const MOODS = ["😞","😐","🙂","😊","😁"];
+  jCard.appendChild(el(`<div class="sub" style="margin-bottom:10px">Waga, nastrój i makroskładniki — zapisują się automatycznie.</div>`));
+  // Waga
+  const wRow = el(`<div class="row"><div><div class="k">⚖️ Waga</div><div class="ksub">BMI obliczany automatycznie (wzrost 178 cm)</div></div><div class="num-input"><input type="number" id="jWeight" placeholder="kg" step="0.1" value="${jt.weight_kg||''}" style="width:80px"/><span>kg</span></div></div>`);
+  jCard.appendChild(wRow);
+  // Nastrój
+  const mRow = el(`<div style="padding:12px 0;border-bottom:1px solid var(--line)"><div class="k">😊 Nastrój</div><div class="mood-pick" id="moodPick"></div></div>`);
+  let selMood = jt.mood || 0;
+  MOODS.forEach((em,i)=>{const btn=el(`<button class="mood-btn ${selMood===i+1?"active":""}">${em}</button>`);btn.addEventListener("click",()=>{selMood=i+1;mRow.querySelectorAll(".mood-btn").forEach((b,j)=>b.classList.toggle("active",j===i));});mRow.querySelector("#moodPick").appendChild(btn);});
+  jCard.appendChild(mRow);
+  // Woda
+  const wtrRow = el(`<div class="row"><div class="k">💧 Woda</div><div class="num-input"><input type="number" id="jWater" placeholder="0" min="0" max="20" value="${jt.water_glasses||''}" style="width:60px"/><span>szklanek</span></div></div>`);
+  jCard.appendChild(wtrRow);
+  // Kalorie + makro
+  const macroRow = el(`<div class="row" style="flex-wrap:wrap;gap:8px"><div class="k" style="width:100%">🍽️ Kalorie i makra</div>
+    <div class="num-input"><input type="number" id="jCal" placeholder="kcal" value="${jt.calories_eaten||''}" style="width:80px"/><span>kcal</span></div>
+    <div class="num-input"><input type="number" id="jProt" placeholder="białko" value="${jt.protein_g||''}" style="width:70px"/><span>g B</span></div>
+    <div class="num-input"><input type="number" id="jCarbs" placeholder="węgle" value="${jt.carbs_g||''}" style="width:70px"/><span>g W</span></div>
+    <div class="num-input"><input type="number" id="jFat" placeholder="tłuszcz" value="${jt.fat_g||''}" style="width:70px"/><span>g T</span></div>
+  </div>`);
+  jCard.appendChild(macroRow);
+  const saveJBtn = el(`<button class="btn primary" style="margin-top:12px">Zapisz dziennik</button>`);
+  saveJBtn.addEventListener("click", async ()=>{
+    const body = {};
+    const w = parseFloat(jCard.querySelector("#jWeight")?.value); if(!isNaN(w)&&w>0) body.weight_kg=w;
+    if (selMood) body.mood=selMood;
+    const wtr = parseInt(jCard.querySelector("#jWater")?.value); if(!isNaN(wtr)) body.water_glasses=wtr;
+    const cal = parseInt(jCard.querySelector("#jCal")?.value); if(!isNaN(cal)) body.calories_eaten=cal;
+    const prot = parseInt(jCard.querySelector("#jProt")?.value); if(!isNaN(prot)) body.protein_g=prot;
+    const carbs = parseInt(jCard.querySelector("#jCarbs")?.value); if(!isNaN(carbs)) body.carbs_g=carbs;
+    const fat = parseInt(jCard.querySelector("#jFat")?.value); if(!isNaN(fat)) body.fat_g=fat;
+    await api("/api/journal",{method:"POST",body:JSON.stringify(body)});
+    toast("Dziennik zapisany ✓");
+  });
+  jCard.appendChild(saveJBtn);
+  wrap.appendChild(jCard);
 
   wrap.appendChild(el(`<div class="card"><h3>Zainstaluj na iPhonie</h3><ol class="install-steps">
     <li>Otwórz tę stronę w <b>Safari</b>.</li>

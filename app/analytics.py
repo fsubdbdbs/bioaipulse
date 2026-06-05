@@ -386,16 +386,155 @@ def daily_goals(entry, base, goal="maintain", goals_catalog: dict = None) -> lis
 
 
 # ---------------------------------------------------------------------------
+# Resilience Score — odporność psychofizyczna (własna analiza, nie z opaski)
+# ---------------------------------------------------------------------------
+
+def resilience_score(history: list[dict], base: dict) -> dict:
+    """
+    Miara odporności organizmu wyliczana z trendów HRV, snu i gotowości.
+    Nie myl z gotowością (readiness) — to długoterminowa kondycja układu nerwowego.
+    """
+    last7 = history[-7:] if len(history) >= 7 else history
+
+    # 1. Trend HRV (0-35): rosnące = dobre, spadające = złe
+    hrvs = [e.get("hrv_rmssd") for e in last7 if e.get("hrv_rmssd")]
+    hrv_pts = 0
+    if len(hrvs) >= 3:
+        avg_early = mean(hrvs[:len(hrvs)//2])
+        avg_late = mean(hrvs[len(hrvs)//2:])
+        if avg_late > avg_early * 1.03:
+            hrv_pts = 35
+        elif avg_late > avg_early * 0.97:
+            hrv_pts = 24
+        else:
+            hrv_pts = max(0, int(35 - (avg_early - avg_late) / avg_early * 100))
+
+    # 2. Regularność snu (0-30): mniejsze odchylenie = lepiej
+    cons = sleep_consistency(history)
+    sleep_pts = 0
+    if cons:
+        sd = cons["stddev_min"]
+        sleep_pts = max(0, 30 - int(sd * 0.35))
+
+    # 3. Średnia gotowość w tygodniu (0-35)
+    scores = [(e.get("daily_readiness") or {}).get("score") for e in last7]
+    scores = [s for s in scores if s is not None]
+    ready_pts = min(35, int(mean(scores) * 0.35)) if scores else 0
+
+    total = hrv_pts + sleep_pts + ready_pts
+
+    if total >= 75:
+        label, desc = "Optymalna", "Układ nerwowy regeneruje się sprawnie. Wysoka adaptacja do stresu."
+    elif total >= 50:
+        label, desc = "Zrównoważona", "Dobra odporność, ale są obszary do poprawy — zwłaszcza regularność snu."
+    else:
+        label, desc = "Niska", "Organizm pod obciążeniem. Priorytet: regularny sen, odpoczynek, mniej stresu."
+
+    return {"score": total, "label": label, "description": desc,
+            "components": {"hrv_trend": hrv_pts, "sleep_regularity": sleep_pts, "readiness_avg": ready_pts}}
+
+
+# ---------------------------------------------------------------------------
+# Sleep Efficiency — procent czasu snu do czasu w łóżku
+# ---------------------------------------------------------------------------
+
+def sleep_efficiency(entry: dict) -> float | None:
+    s = _sleep(entry)
+    total = s.get("total_minutes")
+    start = s.get("sleep_start")
+    end = s.get("sleep_end")
+    if not (total and start and end):
+        return None
+    try:
+        s_dt = datetime.fromisoformat(start)
+        e_dt = datetime.fromisoformat(end)
+        in_bed = (e_dt - s_dt).total_seconds() / 60
+        if in_bed <= 0:
+            return None
+        return round(min(100.0, total / in_bed * 100), 1)
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# VO2 Max szacunkowy (Firstbeat / Jones formula uproszczona)
+# ---------------------------------------------------------------------------
+
+def vo2max_estimate(entry: dict, base: dict) -> float | None:
+    """
+    Przybliżona wartość VO2Max z tętna spoczynkowego i maksymalnego.
+    Formuła: 15 × (HRmax / HRrest). Wymaga max HR; jeśli brak — szacujemy z danych.
+    """
+    rhr = entry.get("resting_hr_bpm") or base.get("rhr")
+    hr = entry.get("heart_rate_bpm") or {}
+    hr_max = hr.get("max")
+    if not rhr or rhr <= 0:
+        return None
+    if not hr_max:
+        # Estymuj max HR z danych treningowych jeśli nie dostępny
+        return None
+    return round(15 * (hr_max / rhr), 1)
+
+
+# ---------------------------------------------------------------------------
+# Tygodniowe podsumowanie
+# ---------------------------------------------------------------------------
+
+def weekly_summary(history: list[dict]) -> dict:
+    week = history[-7:]
+    steps = [e.get("steps") or 0 for e in week]
+    calories = [e.get("calories_kcal") or 0 for e in week]
+    cardio_load = [e.get("cardio_load") or 0 for e in week]
+    azm = [e.get("active_zone_minutes") or 0 for e in week]
+    workouts = sum(len(e.get("workouts") or []) for e in week)
+    sleep_scores = [(e.get("sleep") or {}).get("sleep_score") for e in week if (e.get("sleep") or {}).get("sleep_score")]
+
+    total_steps = sum(steps)
+    total_calories = round(sum(calories))
+    total_load = round(sum(cardio_load))
+    total_azm = sum(azm)
+    avg_steps = round(total_steps / len(week)) if week else 0
+
+    # Tygodniowy cel obciążenia kardio — adaptowany do gotowości
+    base_load_target = 500  # punkty Cardio Load
+    load_pct = round(total_load / base_load_target * 100) if base_load_target else 0
+
+    return {
+        "total_steps": total_steps,
+        "avg_steps": avg_steps,
+        "total_calories": total_calories,
+        "total_cardio_load": total_load,
+        "cardio_load_target": base_load_target,
+        "cardio_load_pct": min(100, load_pct),
+        "total_azm": total_azm,
+        "workouts_count": workouts,
+        "avg_sleep_score": round(mean(sleep_scores), 0) if sleep_scores else None,
+        "days": len(week),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Główna funkcja
 # ---------------------------------------------------------------------------
 
-def analyze(history, goal="maintain", custom_goals: dict = None):
+def analyze(history, goal="maintain", custom_goals: dict = None, journal: list = None):
     if not history:
         return {"empty": True}
     catalog = build_goals_catalog(custom_goals)
     base = baselines(history)
     today = history[-1]
     ready = readiness(today, base)
+    eff = sleep_efficiency(today)
+    vo2 = vo2max_estimate(today, base)
+    res = resilience_score(history, base)
+    week = weekly_summary(history)
+
+    # Nastrój z dziennika
+    mood_history = []
+    if journal:
+        mood_history = [{"date": j["date"], "mood": j.get("mood"), "note": j.get("mood_note", "")}
+                        for j in journal[-14:] if j.get("mood")]
+
     return {
         "empty": False,
         "today": today,
@@ -406,6 +545,11 @@ def analyze(history, goal="maintain", custom_goals: dict = None):
         "insights": insights(history, base),
         "action_plans": action_plans(today, ready, base, goal, goals_catalog=catalog),
         "daily_goals": daily_goals(today, base, goal, goals_catalog=catalog),
+        "resilience": res,
+        "sleep_efficiency": eff,
+        "vo2max": vo2,
+        "weekly": week,
+        "mood_history": mood_history,
         "goal": goal,
         "goals_catalog": catalog,
         "history": history,
