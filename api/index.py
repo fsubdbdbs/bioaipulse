@@ -444,7 +444,10 @@ def push_subscribe():
 
 
 def _send_push(sub, title, body):
-    from pywebpush import webpush
+    try:
+        from pywebpush import webpush
+    except ImportError:
+        return  # pywebpush opcjonalne (nie dostępne na Vercelu)
     webpush(
         subscription_info=sub,
         data=json.dumps({"title": title, "body": body}),
