@@ -68,32 +68,44 @@ def _local_read() -> dict:
     if LOCAL_STORE.exists():
         try:
             return json.loads(LOCAL_STORE.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError):
             return {}
     return {}
 
 
 def _local_write(d: dict):
     LOCAL_STORE.parent.mkdir(parents=True, exist_ok=True)
-    LOCAL_STORE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        LOCAL_STORE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass  # Vercel read-only fs — ignoruj błąd zapisu
 
 
 def store_get(key: str, default=None):
     if KV_URL and KV_TOKEN:
-        import requests
-        r = requests.get(f"{KV_URL}/get/{key}", headers={"Authorization": f"Bearer {KV_TOKEN}"}, timeout=8)
-        if r.ok:
-            val = r.json().get("result")
-            return json.loads(val) if val else default
+        try:
+            import requests as _r
+            resp = _r.get(f"{KV_URL}/get/{key}",
+                          headers={"Authorization": f"Bearer {KV_TOKEN}"}, timeout=8)
+            if resp.ok:
+                val = resp.json().get("result")
+                return json.loads(val) if val else default
+        except Exception:
+            pass
         return default
     return _local_read().get(key, default)
 
 
 def store_set(key: str, value):
     if KV_URL and KV_TOKEN:
-        import requests
-        requests.post(f"{KV_URL}/set/{key}", headers={"Authorization": f"Bearer {KV_TOKEN}"},
-                      data=json.dumps(value), timeout=8)
+        try:
+            import requests as _r
+            _r.post(f"{KV_URL}/set/{key}",
+                    headers={"Authorization": f"Bearer {KV_TOKEN}",
+                             "Content-Type": "application/json"},
+                    data=json.dumps({"value": json.dumps(value)}), timeout=8)
+        except Exception:
+            pass
         return
     d = _local_read()
     d[key] = value
