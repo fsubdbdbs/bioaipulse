@@ -1,6 +1,6 @@
 /* sw.js — Service Worker BioAI-Pulse: cache powłoki + powiadomienia push */
 
-const CACHE = "pulse-v5";
+const CACHE = "pulse-v6";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json",
   "/icons/icon-192.png", "/icons/icon-512.png"];
 

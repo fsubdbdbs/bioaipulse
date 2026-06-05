@@ -771,6 +771,45 @@ def goals_check():
     return jsonify({"checked": store_get(today_key, [])})
 
 
+@app.post("/api/scan-image")
+def api_scan_image():
+    """Groq vision: analizuje zdjęcie posiłku lub rozpiski treningowej."""
+    if not require_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    b64 = body.get("image_b64")
+    mime = body.get("mime_type", "image/jpeg")
+    if not b64:
+        return jsonify({"ok": False, "error": "Brak obrazu"}), 400
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        return jsonify({"ok": False, "error": "Brak klucza AI"}), 400
+    try:
+        from groq import Groq as _Groq
+        client = _Groq(api_key=groq_key)
+        resp = client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                    {"type": "text", "text": (
+                        "Przeanalizuj to zdjęcie. Jeśli to posiłek — podaj przybliżone kalorie i makroskładniki (białko, węglowodany, tłuszcz) w jednym zdaniu po polsku. "
+                        "Jeśli to rozpiski treningowe lub ćwiczenia — wylistuj ćwiczenia krótko. "
+                        "Odpowiedz po polsku, krótko i konkretnie (max 3 zdania)."
+                    )}
+                ]
+            }],
+            max_tokens=200,
+            temperature=0.3,
+        )
+        result = resp.choices[0].message.content.strip()
+        return jsonify({"ok": True, "result": result})
+    except Exception as e:
+        # Fallback jeśli vision model niedostępny
+        return jsonify({"ok": False, "error": f"Vision API: {str(e)[:100]}"}), 500
+
+
 @app.get("/api/ping")
 def ping():
     return jsonify({"ok": True})
