@@ -406,6 +406,57 @@ def api_chat():
                     store_set("custom_goal", data)
                     set_goal = {"goal": gid, "label": data["label"], "emoji": data["emoji"]}
 
+    # Fallback: model powiedział że ustawia cel ale pominął blok JSON
+    # → drugi szybki call do Groq żeby wygenerować SET_GOAL
+    GOAL_CONFIRM_KW = ["ustalam cel", "ustawiam cel", "potwierdzam cel", "nowy cel:",
+                       "ustawiłem cel", "ustawiłam cel", "przełączam cel", "cel to:", "cel: "]
+    if not set_goal and groq_key and any(kw in reply.lower() for kw in GOAL_CONFIRM_KW):
+        try:
+            from groq import Groq as _Groq
+            _client = _Groq(api_key=groq_key)
+            _resp = _client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": (
+                        "Wygeneruj TYLKO poprawny JSON (bez tekstu wokół) dla nowego celu treningowego. "
+                        'Format: {"goal":"id_bez_spacji","label":"Nazwa PL","emoji":"🎯",'
+                        '"plan_hard":["ćw1","ćw2","ćw3"],"plan_mid":["ćw1","ćw2"],"plan_easy":["ćw1","ćw2"],'
+                        '"plan_headline_hard":"Nagłówek","plan_headline_mid":"Nagłówek","plan_headline_easy":"Regeneracja",'
+                        '"daily_task":"Główne zadanie dnia","note":""}'
+                    )},
+                    {"role": "user", "content": (
+                        f"Wiadomość coacha: '{reply[:300]}'\n"
+                        f"Kontekst rozmowy: '{' | '.join(m['content'][:60] for m in messages[-3:])}'\n"
+                        "Wygeneruj JSON dla tego celu."
+                    )},
+                ],
+                max_tokens=500, temperature=0.2,
+            )
+            _raw = _resp.choices[0].message.content.strip()
+            _m = re.search(r"\{[\s\S]+\}", _raw)
+            if _m:
+                _payload = json.loads(_m.group())
+                _gid = _payload.get("goal", "").strip().lower().replace(" ", "_")
+                if _gid:
+                    _data = {
+                        "goal": _gid,
+                        "label": _payload.get("label", _gid),
+                        "emoji": _payload.get("emoji", "🎯"),
+                        "custom": True,
+                        "plan_hard":          _payload.get("plan_hard", []),
+                        "plan_mid":           _payload.get("plan_mid", []),
+                        "plan_easy":          _payload.get("plan_easy", []),
+                        "plan_headline_hard": _payload.get("plan_headline_hard", "Wysoka gotowość"),
+                        "plan_headline_mid":  _payload.get("plan_headline_mid", "Umiarkowanie"),
+                        "plan_headline_easy": _payload.get("plan_headline_easy", "Regeneracja"),
+                        "daily_task":         _payload.get("daily_task", ""),
+                        "note":               _payload.get("note", ""),
+                    }
+                    store_set("custom_goal", _data)
+                    set_goal = {"goal": _gid, "label": _data["label"], "emoji": _data["emoji"]}
+        except Exception:
+            pass
+
     return jsonify({"reply": reply, "set_goal": set_goal})
 
 
