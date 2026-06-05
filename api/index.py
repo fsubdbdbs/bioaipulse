@@ -463,7 +463,61 @@ def api_chat():
         except Exception:
             pass
 
-    return jsonify({"reply": reply, "set_goal": set_goal})
+    # Detekcja: czy user prosi o wygenerowanie treningu?
+    workout_result = None
+    WORKOUT_REQUEST_KW = [
+        "zrób mi trening", "zrob mi trening", "stwórz trening", "stworz trening",
+        "wygeneruj trening", "chcę trening", "chce trening", "daj mi trening",
+        "ułóż trening", "uloz trening", "zaplanuj trening", "trening na dziś",
+        "trening dzisiaj", "make workout", "create workout",
+    ]
+    last_user_msg = next((m["content"] for m in reversed(messages) if m["role"]=="user"), "")
+    wants_workout = any(kw in last_user_msg.lower() for kw in WORKOUT_REQUEST_KW)
+
+    if wants_workout and groq_key:
+        try:
+            # Wyciągnij parametry treningu z wiadomości przez Groq
+            readiness_score = int(ready.get("score") or 70)
+            param_resp = _Groq(api_key=groq_key).chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": (
+                        'Wyciągnij parametry treningu z wiadomości. Odpowiedz TYLKO JSON: '
+                        '{"type":"silowy|cardio|HIIT|stretch|mieszany","duration_min":30,"equipment":"brak|hantle|sztanga|maszyny","focus":"opis","level":"lekki|sredni|zaawansowany"}'
+                    )},
+                    {"role": "user", "content": last_user_msg},
+                ],
+                max_tokens=120, temperature=0.1,
+            )
+            params_raw = param_resp.choices[0].message.content.strip()
+            pm = re.search(r"\{.*?\}", params_raw, re.S)
+            params = json.loads(pm.group()) if pm else {}
+
+            # Wygeneruj trening
+            intensity = "intensywny" if readiness_score>=75 else "umiarkowany" if readiness_score>=50 else "lekki"
+            wk_resp = _Groq(api_key=groq_key).chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": WORKOUT_PROMPT},
+                    {"role": "user", "content": (
+                        f"Trening: {params.get('type','mieszany')}, "
+                        f"czas: {params.get('duration_min',30)} min, "
+                        f"sprzęt: {params.get('equipment','brak')}, "
+                        f"skupienie: {params.get('focus','całe ciało')}, "
+                        f"poziom: {params.get('level','sredni')}, "
+                        f"intensywność: {intensity} (gotowość {readiness_score}/100)."
+                    )},
+                ],
+                max_tokens=1400, temperature=0.3,
+            )
+            wk_raw = wk_resp.choices[0].message.content.strip()
+            wk_m = re.search(r"\{[\s\S]+\}", wk_raw)
+            if wk_m:
+                workout_result = json.loads(wk_m.group())
+        except Exception:
+            pass
+
+    return jsonify({"reply": reply, "set_goal": set_goal, "workout": workout_result})
 
 
 # ---------------------------------------------------------------------------

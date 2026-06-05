@@ -604,13 +604,21 @@ function stripSetGoal(text) {
 function paintChat() {
   const c=$("#chat"); if(!c) return; c.innerHTML="";
   if (!State.chat.length) c.appendChild(el(`<div class="bubble ai">Cześć Franek! Napisz mi o czym marzysz — np. "chcę zacząć biegać" albo "jak mój dzisiejszy sen?"</div>`));
-  State.chat.forEach(m=>{
+  for (const m of State.chat) {
+    // Specjalny bubble z wygenerowanym treningiem
+    if (m.role==="__workout" && m.workout) {
+      const w = m.workout;
+      const wBubble = el(`<div class="bubble ai" style="padding:10px 12px"><div style="font-weight:700;margin-bottom:6px">🏋️ ${esc(w.title||"Trening")}</div><div class="sub" style="margin-bottom:8px">${w.duration_min} min · ${(w.sections||[]).length} sekcje</div><button class="btn primary" style="font-size:13px;padding:10px">▶ Otwórz Workout Player</button></div>`);
+      wBubble.querySelector("button").addEventListener("click", ()=>openPlayer(w));
+      c.appendChild(wBubble);
+      continue;
+    }
     const isAI = m.role==="ai" || m.role==="assistant";
     const txt = isAI ? stripSetGoal(m.content) : m.content;
     const cls = m.role==="user" ? "me" : "ai";
     const style = m.role==="error" ? ' style="opacity:.6"' : '';
     if (txt) c.appendChild(el(`<div class="bubble ${cls}"${style}>${esc(txt)}</div>`));
-  });
+  }
   c.scrollTop=c.scrollHeight;
 }
 async function sendChat() {
@@ -623,7 +631,12 @@ async function sendChat() {
     const r=await api("/api/chat",{method:"POST",body:JSON.stringify({messages:toSend,goal:State.goal})});
     typing.remove();
     const reply = stripSetGoal(r.reply||"").trim() || "(brak odpowiedzi)";
-    State.chat.push({role:"ai",content:reply}); paintChat();
+    State.chat.push({role:"ai",content:reply});
+    // Jeśli coach wygenerował trening — dodaj przycisk w czacie
+    if (r.workout && r.workout.sections) {
+      State.chat.push({role:"_workout", workout:r.workout, content:"__workout__"});
+    }
+    paintChat();
     if (r.set_goal && r.set_goal.goal) { await setGoal(r.set_goal.goal, true); }
   } catch(e) { typing.remove(); State.chat.push({role:"error",content:"⚠️ Błąd połączenia — spróbuj ponownie."}); paintChat(); }
 }
